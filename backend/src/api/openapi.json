@@ -1,0 +1,308 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "PO-to-Invoice Agentic AI SaaS API",
+    "version": "1.0.0",
+    "description": "Authoritative REST API specification for Multi-tenant PO-to-Invoice Agentic AI platform"
+  },
+  "servers": [
+    { "url": "http://localhost:4000/api/v1", "description": "Local Dev Server" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["code", "message", "details", "requestId"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "details": { "type": "object" },
+          "requestId": { "type": "string" }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "required": ["page", "pageSize", "total", "totalPages"],
+        "properties": {
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "summary": "User Login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email", "password"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Login Successful" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "summary": "Refresh Access Token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["refreshToken"],
+                "properties": { "refreshToken": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Token refreshed" }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "summary": "Current Authenticated User",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "User details" }
+        }
+      }
+    },
+    "/pos": {
+      "post": {
+        "summary": "Upload Purchase Order",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "PO accepted for async processing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["poId", "jobId", "status"],
+                  "properties": {
+                    "poId": { "type": "string" },
+                    "jobId": { "type": "string" },
+                    "status": { "type": "string", "enum": ["PROCESSING"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Purchase Orders",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Paginated list of POs" }
+        }
+      }
+    },
+    "/pos/{poId}": {
+      "get": {
+        "summary": "Get Purchase Order Details",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Purchase Order Resource" }
+        }
+      }
+    },
+    "/pos/{poId}/status": {
+      "get": {
+        "summary": "Poll PO Status",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "PO Status Summary" }
+        }
+      }
+    },
+    "/pos/{poId}/retry": {
+      "post": {
+        "summary": "Manual Retry on FAILED PO",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "202": { "description": "Retry queued" }
+        }
+      }
+    },
+    "/invoices": {
+      "get": {
+        "summary": "List Invoices",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Paginated list of invoices" }
+        }
+      }
+    },
+    "/invoices/{invoiceId}": {
+      "get": {
+        "summary": "Get Invoice Details",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Invoice Resource" }
+        }
+      }
+    },
+    "/invoices/{poId}/generate": {
+      "post": {
+        "summary": "Generate Invoice for Validated PO",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "201": { "description": "Invoice Generated" }
+        }
+      }
+    },
+    "/invoices/{invoiceId}/download": {
+      "get": {
+        "summary": "Get Presigned Invoice Download URL",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Short-lived presigned URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["url", "expiresAt"],
+                  "properties": {
+                    "url": { "type": "string" },
+                    "expiresAt": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reviews": {
+      "get": {
+        "summary": "List Human Reviews with optional ?stage= filter",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Paginated list of reviews" }
+        }
+      }
+    },
+    "/reviews/{reviewId}": {
+      "get": {
+        "summary": "Get Human Review Details with Evidence",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Review details with multi-source evidence array" }
+        }
+      }
+    },
+    "/reviews/{reviewId}/approve": {
+      "post": {
+        "summary": "Approve Exception & Resume Graph",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Approved and workflow resumed" }
+        }
+      }
+    },
+    "/reviews/{reviewId}/reject": {
+      "post": {
+        "summary": "Reject Exception with Stage-Aware Outcome",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Rejected" }
+        }
+      }
+    },
+    "/customers": {
+      "get": {
+        "summary": "List Customers",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Paginated list of customers" }
+        }
+      }
+    },
+    "/customers/{customerId}": {
+      "get": {
+        "summary": "Get Customer with 1-to-N Contracts",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Customer resource with contracts list" }
+        }
+      }
+    },
+    "/dashboard/summary": {
+      "get": {
+        "summary": "Dashboard KPI Summary",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Dashboard summary statistics" }
+        }
+      }
+    },
+    "/dashboard/analytics": {
+      "get": {
+        "summary": "Dashboard Analytics & Trends",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Volume trends and status distributions" }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "summary": "List Users (Read-only for v1)",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Paginated list of users" }
+        }
+      }
+    },
+    "/audit/{entityId}": {
+      "get": {
+        "summary": "Get Audit Trail for Entity",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Bounded audit log records" }
+        }
+      }
+    }
+  }
+}
