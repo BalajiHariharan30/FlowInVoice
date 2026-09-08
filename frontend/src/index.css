@@ -41,6 +41,18 @@
     border-radius: 0.75rem;
   }
 
+  /* Dark System Surface Utilities */
+  .bg-dark-primary { background-color: #010308; }
+  .bg-dark-secondary { background-color: #0A0D14; }
+  .bg-dark-surface { background-color: #0A0D14; }
+  .bg-dark-elevated { background-color: #10141D; }
+  .bg-dark-card { background-color: #10141D; }
+  .bg-dark-card-hover { background-color: #161B26; }
+  .border-dark-border { border-color: #1D2430; }
+  .text-dark-border { color: #1D2430; }
+  .hover\:bg-dark-hover:hover { background-color: #171D2A; }
+  .shadow-dark-elevated { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }
+
   /* Light Workspace Surface */
   .workspace-panel {
     background-color: #F7F8FA;

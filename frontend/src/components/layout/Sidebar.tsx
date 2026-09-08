@@ -31,25 +31,25 @@ export const Sidebar: React.FC = () => {
   ];
 
   return (
-    <aside className="w-64 bg-dark-primary text-slate-400 flex flex-col h-screen fixed left-0 top-0 border-r border-dark-border z-30 select-none">
+    <aside className="w-64 bg-[#010308] text-slate-400 flex flex-col h-screen fixed left-0 top-0 border-r border-[#1D2430] z-30 select-none shadow-2xl">
       {/* Brand Header */}
-      <div className="p-5 border-b border-dark-border flex items-center space-x-3">
-        <div className="w-8 h-8 rounded-lg bg-accent-primary flex items-center justify-center text-white shadow-subtle flex-shrink-0">
+      <div className="p-5 border-b border-[#1D2430] flex items-center space-x-3 bg-[#010308]">
+        <div className="w-8 h-8 rounded-lg bg-accent-primary flex items-center justify-center text-white shadow-md flex-shrink-0">
           <Zap className="w-4 h-4 fill-white" />
         </div>
         <div className="min-w-0">
           <div className="flex items-center space-x-1.5">
-            <span className="text-white font-bold text-sm tracking-tight truncate">FlowInvoice AI</span>
+            <span className="text-white font-black text-sm tracking-tight truncate">FlowInvoice AI</span>
           </div>
-          <p className="text-[10px] text-workspace-muted font-mono tracking-tight truncate">
+          <p className="text-[10px] text-slate-400 font-mono tracking-tight truncate">
             Enterprise PO → Invoice
           </p>
         </div>
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        <div className="px-3 pb-1.5 text-[10px] font-mono uppercase tracking-wider text-workspace-muted font-medium">
+      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto bg-[#010308]">
+        <div className="px-3 pb-2 text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">
           Platform Operations
         </div>
         {navItems.map((item) => {
@@ -59,10 +59,10 @@ export const Sidebar: React.FC = () => {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `group flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                `group flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-semibold transition-all ${
                   isActive
-                    ? "bg-accent-primary text-white"
-                    : "text-slate-400 hover:text-white hover:bg-dark-hover"
+                    ? "bg-accent-primary text-white shadow-sm"
+                    : "text-slate-300 hover:text-white hover:bg-[#171D2A]"
                 }`
               }
             >
@@ -71,17 +71,17 @@ export const Sidebar: React.FC = () => {
                   <div className="flex items-center space-x-2.5 min-w-0">
                     <Icon
                       className={`w-4 h-4 flex-shrink-0 ${
-                        isActive ? "text-white" : "text-slate-400 group-hover:text-slate-200"
+                        isActive ? "text-white" : "text-slate-400 group-hover:text-white"
                       }`}
                     />
                     <span className="truncate">{item.label}</span>
                   </div>
                   {item.badge && (
                     <span
-                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full font-bold ${
                         isActive
                           ? "bg-white/20 text-white"
-                          : "bg-semantic-warning/20 text-semantic-warning"
+                          : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                       }`}
                     >
                       {item.badge}
@@ -95,21 +95,21 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       {/* Bottom User & Tenant Profile */}
-      <div className="p-3 border-t border-dark-border bg-dark-secondary/60">
-        <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-dark-elevated border border-dark-border">
+      <div className="p-3 border-t border-[#1D2430] bg-[#0A0D14]">
+        <div className="flex items-center justify-between px-2.5 py-2 rounded-lg bg-[#10141D] border border-[#1D2430]">
           <div className="flex items-center space-x-2 min-w-0">
-            <div className="w-7 h-7 rounded-md bg-accent-primary/20 text-accent-secondary border border-accent-border/30 flex items-center justify-center font-bold text-xs">
+            <div className="w-7 h-7 rounded-md bg-accent-primary/20 text-accent-secondary border border-accent-border/30 flex items-center justify-center font-bold text-xs flex-shrink-0">
               {user?.name ? user.name.slice(0, 1).toUpperCase() : "A"}
             </div>
             <div className="min-w-0">
-              <div className="text-xs font-medium text-white truncate">{user?.name || "Admin"}</div>
-              <div className="text-[10px] text-workspace-muted truncate font-mono">{activeTenant}</div>
+              <div className="text-xs font-bold text-white truncate">{user?.name || "Administrator"}</div>
+              <div className="text-[10px] text-slate-400 truncate font-mono">{activeTenant}</div>
             </div>
           </div>
           <button
             onClick={logout}
             title="Sign out"
-            className="p-1.5 text-workspace-muted hover:text-rose-400 rounded-md hover:bg-dark-hover transition"
+            className="p-1.5 text-slate-400 hover:text-rose-400 rounded-md hover:bg-[#171D2A] transition ml-1"
           >
             <LogOut className="w-3.5 h-3.5" />
           </button>

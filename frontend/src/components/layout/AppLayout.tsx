@@ -19,12 +19,12 @@ export const AppLayout: React.FC = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-dark-primary flex">
+    <div className="min-h-screen bg-[#010308] flex">
       {/* Dark Persistent Sidebar */}
       <Sidebar />
 
       {/* Main Content Area */}
-      <div className="flex-1 ml-64 flex flex-col min-h-screen bg-workspace-bg">
+      <div className="flex-1 ml-64 flex flex-col min-h-screen bg-[#F7F8FA]">
         {/* Dark Top Navigation */}
         <Navbar onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
 
