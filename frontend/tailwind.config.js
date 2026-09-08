@@ -9,9 +9,14 @@ export default {
       colors: {
         // Dark surfaces (Application shell, AI workflow, Developer Center, logs)
         dark: {
+          DEFAULT: "#010308",
+          bg: "#010308",
           primary: "#010308",
+          surface: "#0A0D14",
           secondary: "#0A0D14",
           elevated: "#10141D",
+          card: "#10141D",
+          "card-hover": "#161B26",
           border: "#1D2430",
           hover: "#171D2A"
         },

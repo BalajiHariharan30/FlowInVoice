@@ -8,45 +8,73 @@
   }
 
   body {
-    @apply bg-dark-primary text-workspace-text antialiased selection:bg-accent-primary/20 selection:text-accent-primary;
+    background-color: #010308;
+    color: #111827;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: rgba(24, 65, 201, 0.2);
+    color: #1841C9;
   }
 }
 
 @layer components {
   /* Dark Infrastructure Panel */
   .dark-panel {
-    @apply bg-dark-secondary border border-dark-border rounded-xl;
+    background-color: #0A0D14;
+    border: 1px solid #1D2430;
+    border-radius: 0.75rem;
   }
 
   /* Dark Elevated Card */
   .dark-card {
-    @apply bg-dark-elevated border border-dark-border rounded-xl;
+    background-color: #10141D;
+    border: 1px solid #1D2430;
+    border-radius: 0.75rem;
   }
 
   /* Light Workspace Surface */
   .workspace-panel {
-    @apply bg-workspace-bg text-workspace-text;
+    background-color: #F7F8FA;
+    color: #111827;
   }
 
   .workspace-card {
-    @apply bg-workspace-card border border-workspace-border rounded-xl shadow-card;
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
   }
 
   /* Standard Enterprise Table */
   .enterprise-table {
-    @apply w-full text-left text-xs border-collapse;
+    width: 100%;
+    text-align: left;
+    font-size: 0.75rem;
+    border-collapse: collapse;
   }
 
   .enterprise-table th {
-    @apply py-3 px-4 bg-workspace-subtle border-b border-workspace-border text-workspace-muted font-medium uppercase tracking-wider text-[11px];
+    padding: 0.75rem 1rem;
+    background-color: #F9FAFB;
+    border-bottom: 1px solid #E5E7EB;
+    color: #667085;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.6875rem;
   }
 
   .enterprise-table td {
-    @apply py-3 px-4 border-b border-workspace-border text-workspace-text;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #E5E7EB;
+    color: #111827;
   }
 
   .enterprise-table tr:hover td {
-    @apply bg-workspace-hover/60;
+    background-color: rgba(243, 244, 246, 0.6);
   }
 }
 
