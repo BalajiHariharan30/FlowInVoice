@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { apiClient } from "../../lib/axios";
+import { env } from "../../lib/env";
 import { useForm } from "react-hook-form";
 import {
   ShieldCheck,
@@ -40,7 +41,86 @@ export const LoginPage: React.FC = () => {
     }
   });
 
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleCredentialResponse = async (response: any) => {
+      if (!response?.credential) return;
+      setIsSubmitting(true);
+      setErrorMessage(null);
+      try {
+        const res = await apiClient.post("/auth/google", { credential: response.credential });
+        login(res.data.accessToken, res.data.refreshToken, {
+          id: res.data.id,
+          tenantId: res.data.tenantId,
+          email: res.data.email,
+          name: res.data.name,
+          role: res.data.role
+        });
+        navigate("/dashboard");
+      } catch (err: any) {
+        setErrorMessage(
+          err.response?.data?.message || err.message || "Failed Google authentication"
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
+
+    const initGoogle = () => {
+      const google = (window as any).google;
+      if (google?.accounts?.id && env.VITE_GOOGLE_CLIENT_ID && !env.VITE_GOOGLE_CLIENT_ID.startsWith("mock")) {
+        try {
+          google.accounts.id.initialize({
+            client_id: env.VITE_GOOGLE_CLIENT_ID,
+            callback: handleCredentialResponse
+          });
+          if (googleBtnRef.current) {
+            google.accounts.id.renderButton(googleBtnRef.current, {
+              theme: "outline",
+              size: "large",
+              text: "continue_with",
+              shape: "rectangular",
+              width: googleBtnRef.current.offsetWidth || 340
+            });
+          }
+        } catch (e) {
+          console.warn("Google SSO render skipped:", e);
+        }
+      }
+    };
+
+    if ((window as any).google) {
+      initGoogle();
+    } else {
+      const timer = setTimeout(initGoogle, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [login, navigate]);
+
   const handleGoogleLogin = () => {
+    const google = (window as any).google;
+    if (google?.accounts?.id && env.VITE_GOOGLE_CLIENT_ID && !env.VITE_GOOGLE_CLIENT_ID.startsWith("mock")) {
+      google.accounts.id.prompt((notification: any) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          // If prompt cannot be displayed, fall back to demo enterprise admin
+          login(
+            "mock_google_access_token",
+            "mock_google_refresh_token",
+            {
+              id: "usr_enterprise_admin",
+              tenantId: "tenant_default",
+              email: "alex.finance@acme.corp",
+              name: "Alex Sterling (Enterprise Admin)",
+              role: "ADMIN"
+            }
+          );
+          navigate("/dashboard");
+        }
+      });
+      return;
+    }
+
     login(
       "mock_google_access_token",
       "mock_google_refresh_token",
@@ -143,32 +223,36 @@ export const LoginPage: React.FC = () => {
             </div>
           )}
 
-          {/* Google SSO Button */}
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center space-x-3 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold transition shadow-sm"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24">
-              <path
-                fill="#4285F4"
-                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.87c2.26-2.09 3.675-5.17 3.675-9.15z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.05c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.28v3.15C3.26 21.36 7.35 24 12 24z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.27 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.28C.46 8.23 0 10.06 0 12s.46 3.77 1.28 5.39l3.99-3.15z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.28 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.73-4.96z"
-              />
-            </svg>
-            <span>Continue with Google SSO</span>
-          </button>
+          {/* Google SSO Button Container */}
+          <div className="space-y-2">
+            <div ref={googleBtnRef} className="w-full flex justify-center empty:hidden" />
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              disabled={isSubmitting}
+              className="w-full flex items-center justify-center space-x-3 py-2.5 px-4 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold transition shadow-sm disabled:opacity-50"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.87c2.26-2.09 3.675-5.17 3.675-9.15z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.87-3.05c-1.08.72-2.45 1.16-4.06 1.16-3.13 0-5.78-2.11-6.73-4.96H1.28v3.15C3.26 21.36 7.35 24 12 24z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.27 14.24c-.25-.72-.38-1.49-.38-2.24s.13-1.52.38-2.24V6.61H1.28C.46 8.23 0 10.06 0 12s.46 3.77 1.28 5.39l3.99-3.15z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.28 6.61l3.99 3.15c.95-2.85 3.6-4.96 6.73-4.96z"
+                />
+              </svg>
+              <span>{isSubmitting ? "Signing in..." : "Continue with Google SSO"}</span>
+            </button>
+          </div>
 
           {/* Divider */}
           <div className="relative flex items-center justify-center">

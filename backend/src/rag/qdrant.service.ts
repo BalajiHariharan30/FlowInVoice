@@ -1,4 +1,5 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
+import { v4 as uuidv4, validate as isValidUuid } from "uuid";
 import { env } from "../config/env.js";
 import { DocumentChunk } from "./chunking.js";
 import { EmbeddingService } from "./embeddings.js";
@@ -19,6 +20,10 @@ export class QdrantService {
       : null;
 
   private static readonly COLLECTION_NAME = "p2i_rag_documents";
+
+  private static isQdrantActive(): boolean {
+    return env.VECTOR_PROVIDER === "qdrant" && env.NODE_ENV !== "test" && !!this.client;
+  }
 
   // In-memory mock store for test/dev
   private static mockStore: Array<{
@@ -51,15 +56,17 @@ export class QdrantService {
     for (const chunk of chunks) {
       const vector = await EmbeddingService.getEmbedding(chunk.content);
 
-      if (env.VECTOR_PROVIDER === "qdrant" && this.client) {
+      if (this.isQdrantActive() && this.client) {
         try {
+          const pointId = isValidUuid(chunk.chunkId) ? chunk.chunkId : uuidv4();
           await this.client.upsert(this.COLLECTION_NAME, {
             wait: true,
             points: [
               {
-                id: chunk.chunkId,
+                id: pointId,
                 vector,
                 payload: {
+                  chunkId: chunk.chunkId,
                   tenantId: chunk.tenantId,
                   customerId: chunk.customerId || "",
                   documentId: chunk.documentId,
@@ -98,7 +105,7 @@ export class QdrantService {
   ): Promise<SearchResult[]> {
     const queryVector = await EmbeddingService.getEmbedding(query);
 
-    if (env.VECTOR_PROVIDER === "qdrant" && this.client) {
+    if (this.isQdrantActive() && this.client) {
       try {
         const mustFilters: any[] = [{ key: "tenantId", match: { value: tenantId } }];
         if (filter.customerId) {
@@ -108,16 +115,18 @@ export class QdrantService {
           mustFilters.push({ key: "documentType", match: { value: filter.documentType } });
         }
 
-        const res = await (this.client as any).search(this.COLLECTION_NAME, {
-          vector: queryVector,
-          filter: { must: mustFilters },
-          limit: topK
+        const res = await (this.client as any).query(this.COLLECTION_NAME, {
+          query: queryVector,
+          filter: mustFilters.length > 0 ? { must: mustFilters } : undefined,
+          limit: topK,
+          with_payload: true
         });
 
-        return res.map((hit: any) => ({
+        const points = res.points || [];
+        return points.map((hit: any) => ({
           score: hit.score,
           chunk: {
-            chunkId: String(hit.id),
+            chunkId: (hit.payload?.chunkId as string) || String(hit.id),
             tenantId: hit.payload?.tenantId as string,
             documentId: hit.payload?.documentId as string,
             documentName: hit.payload?.documentName as string,

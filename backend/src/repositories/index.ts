@@ -720,6 +720,17 @@ export class UserRepository {
     const data = items.slice((page - 1) * pageSize, page * pageSize);
     return { data, pagination: calcPagination(page, pageSize, total) };
   }
+
+  static async updateRole(tenantId: string, id: string, role: "ADMIN" | "FINANCE" | "REVIEWER"): Promise<void> {
+    if (isDbConnected()) {
+      await User.updateOne({ tenantId, _id: id }, { role });
+      return;
+    }
+    const doc = inMemory.users.get(id);
+    if (doc && doc.tenantId === tenantId) {
+      doc.role = role;
+    }
+  }
 }
 
 // -------------------------------------------------------------
