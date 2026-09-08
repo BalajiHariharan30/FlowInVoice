@@ -19,10 +19,11 @@ import {
   Download,
   ShieldCheck,
   CheckCircle,
-  Clock
+  Clock,
+  Sparkles,
+  ArrowRight
 } from "lucide-react";
 
-// Public 13-state timeline sequence per §backend §31 and §Part C §10
 const WORKFLOW_STEPS: POStatus[] = [
   "UPLOADED",
   "PROCESSING",
@@ -42,7 +43,6 @@ export const PODetailsPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"items" | "reviews" | "audit" | "document">("items");
 
-  // Fetch initial PO data
   const { data: po, isLoading, error, refetch } = useQuery<PurchaseOrder>({
     queryKey: ["po", id],
     queryFn: async () => {
@@ -52,10 +52,8 @@ export const PODetailsPage: React.FC = () => {
     enabled: !!id
   });
 
-  // Polling hook with progressive backoff per §Part C §10
   const { status: liveStatus, refetch: pollRefetch } = usePOStatus(id, po?.status);
 
-  // Fetch all human reviews tied to this PO
   const { data: reviewsData } = useQuery<{ data: HumanReview[] }>({
     queryKey: ["reviews", { poId: id }],
     queryFn: async () => {
@@ -65,7 +63,6 @@ export const PODetailsPage: React.FC = () => {
     enabled: !!id
   });
 
-  // Fetch audit trail for this PO
   const { data: auditData } = useQuery<{ data: AuditLogItem[] }>({
     queryKey: ["audit", id],
     queryFn: async () => {
@@ -75,7 +72,6 @@ export const PODetailsPage: React.FC = () => {
     enabled: !!id
   });
 
-  // Manual retry mutation (only enabled when status === 'FAILED' per §C10)
   const retryMutation = useMutation({
     mutationFn: async () => {
       const res = await apiClient.post(`/pos/${id}/retry`);
@@ -104,22 +100,23 @@ export const PODetailsPage: React.FC = () => {
   const reviews = reviewsData?.data || [];
   const auditLogs = auditData?.data || [];
 
-  // Determine timeline progress index
   const currentStepIdx = WORKFLOW_STEPS.indexOf(currentStatus);
 
   return (
     <div className="space-y-8">
-      {/* Header with Title, Status & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="space-y-1">
+      {/* Glammorphic Header Card */}
+      <div className="glass-panel p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-500/50 to-transparent"></div>
+        <div className="space-y-1.5">
           <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-bold text-slate-900 font-mono tracking-tight">
+            <h1 className="text-2xl font-black text-white font-mono tracking-tight">
               {po.poNumber}
             </h1>
             <StatusBadge status={currentStatus} />
           </div>
-          <p className="text-xs text-slate-500">
-            Received {formatDate(po.createdAt, true)} • S3 Asset Key: {po.documentName || "document.pdf"}
+          <p className="text-xs text-slate-400">
+            Received {formatDate(po.createdAt, true)} • S3 Vault:{" "}
+            <span className="font-mono text-slate-300">{po.documentName || "document.pdf"}</span>
           </p>
         </div>
 
@@ -128,10 +125,10 @@ export const PODetailsPage: React.FC = () => {
             <button
               onClick={() => retryMutation.mutate()}
               disabled={retryMutation.isPending}
-              className="flex items-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
+              className="flex items-center space-x-2 px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-[0_0_15px_-2px_rgba(244,63,94,0.4)] transition"
             >
               <RotateCw className={`w-3.5 h-3.5 ${retryMutation.isPending ? "animate-spin" : ""}`} />
-              <span>Retry Workflow</span>
+              <span>Retry Pipeline</span>
             </button>
           )}
 
@@ -140,7 +137,7 @@ export const PODetailsPage: React.FC = () => {
               href={po.documentUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center space-x-2 px-3.5 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium rounded-lg transition"
+              className="flex items-center space-x-2 px-4 py-2 bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 text-slate-200 text-xs font-semibold rounded-xl transition"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Original Document</span>
@@ -149,54 +146,62 @@ export const PODetailsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Failure Alert Banner if Failed */}
+      {/* Failure Alert Banner */}
       {isFailed && po.failureReason && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 backdrop-blur-xl text-rose-200 text-xs flex items-center justify-between shadow-[0_0_20px_-3px_rgba(244,63,94,0.25)]">
           <div className="flex items-center space-x-3">
-            <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
             <div>
-              <span className="font-bold">Workflow Failed: </span>
+              <span className="font-bold text-rose-100">Workflow Paused on Error: </span>
               <span>{po.failureReason}</span>
             </div>
           </div>
           <button
             onClick={() => retryMutation.mutate()}
-            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-semibold rounded"
+            className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-100 font-bold rounded-lg border border-rose-500/40"
           >
-            Retry Now
+            Trigger Retry
           </button>
         </div>
       )}
 
-      {/* Public 13-State Workflow Timeline (§Part C §10) */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-          Agentic AI Pipeline Status
-        </h3>
+      {/* Luminous 13-State Pipeline Timeline (§Part C §10) */}
+      <div className="glass-card p-6 space-y-4 relative overflow-hidden">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center space-x-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Autonomous State Graph Progression</span>
+          </h3>
+          <span className="text-[11px] font-mono text-emerald-400">
+            State: {currentStatus}
+          </span>
+        </div>
 
-        <div className="overflow-x-auto pb-2">
+        <div className="overflow-x-auto pb-3 pt-2">
           <div className="flex items-center min-w-max space-x-2">
             {WORKFLOW_STEPS.map((step, idx) => {
               const isPast = currentStepIdx > idx;
               const isCurrent = currentStatus === step;
-              const isRejected = currentStatus === "REJECTED" && idx === 7;
 
-              let circleColor = "bg-slate-200 text-slate-500 border-slate-300";
-              if (isPast) circleColor = "bg-emerald-500 text-white border-emerald-600";
-              if (isCurrent) circleColor = "bg-blue-600 text-white border-blue-700 ring-2 ring-blue-200";
-              if (isRejected) circleColor = "bg-red-600 text-white border-red-700";
+              let nodeStyle = "bg-slate-900 border-white/10 text-slate-500";
+              if (isPast) nodeStyle = "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-neon-emerald";
+              if (isCurrent) nodeStyle = "bg-blue-500 border-blue-300 text-white ring-4 ring-blue-500/20 shadow-neon-blue";
 
               return (
                 <div key={step} className="flex items-center">
-                  <div className="flex flex-col items-center space-y-1.5 px-2">
+                  <div className="flex flex-col items-center space-y-2 px-2">
                     <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border transition ${circleColor}`}
+                      className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border transition-all duration-300 ${nodeStyle}`}
                     >
                       {isPast ? <CheckCircle className="w-4 h-4" /> : idx + 1}
                     </div>
                     <span
-                      className={`text-[10px] font-medium uppercase tracking-tight text-center max-w-[80px] ${
-                        isCurrent ? "text-blue-700 font-bold" : "text-slate-500"
+                      className={`text-[10px] font-semibold uppercase tracking-tight text-center max-w-[80px] ${
+                        isCurrent
+                          ? "text-blue-400 font-extrabold"
+                          : isPast
+                          ? "text-emerald-400/80"
+                          : "text-slate-500"
                       }`}
                     >
                       {step.replace(/_/g, " ")}
@@ -204,8 +209,10 @@ export const PODetailsPage: React.FC = () => {
                   </div>
                   {idx < WORKFLOW_STEPS.length - 1 && (
                     <div
-                      className={`w-8 h-0.5 ${
-                        isPast ? "bg-emerald-500" : "bg-slate-200"
+                      className={`w-8 h-[2px] rounded ${
+                        isPast
+                          ? "bg-gradient-to-r from-emerald-500 to-teal-400 shadow-neon-emerald"
+                          : "bg-white/[0.08]"
                       }`}
                     />
                   )}
@@ -217,112 +224,113 @@ export const PODetailsPage: React.FC = () => {
       </div>
 
       {/* Extracted Metadata Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-1">
-          <div className="flex items-center space-x-2 text-xs text-slate-500">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="glass-card p-5 space-y-1">
+          <div className="flex items-center space-x-2 text-xs text-slate-400">
             <Building className="w-3.5 h-3.5" />
-            <span>Customer</span>
+            <span>Customer Account</span>
           </div>
-          <div className="text-sm font-bold text-slate-900">{po.customerName}</div>
-          <div className="text-xs text-slate-400">ID: {po.customerId || "Auto-detected"}</div>
+          <div className="text-sm font-bold text-white">{po.customerName}</div>
+          <div className="text-[11px] text-slate-400 font-mono">ID: {po.customerId || "Auto-detected"}</div>
         </div>
 
-        {/* Labeled GST Number Field (§Part C §10) */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-1">
-          <div className="flex items-center space-x-2 text-xs text-slate-500">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span className="font-semibold text-emerald-800">GST Number / Tax ID</span>
+        {/* Labeled GST Number field (§Part C §10) */}
+        <div className="glass-card p-5 space-y-1 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/10 rounded-full blur-xl pointer-events-none"></div>
+          <div className="flex items-center space-x-2 text-xs text-emerald-400 font-bold">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="uppercase tracking-wider">GSTIN / Tax ID</span>
           </div>
-          <div className="text-sm font-mono font-bold text-slate-900">
+          <div className="text-sm font-mono font-extrabold text-white tracking-wide">
             {po.gstNumber || "Not Specified"}
           </div>
-          <div className="text-xs text-slate-400">Verified for tax compliance</div>
+          <div className="text-[11px] text-emerald-400/70">Verified for tax calculation</div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-1">
-          <div className="flex items-center space-x-2 text-xs text-slate-500">
+        <div className="glass-card p-5 space-y-1">
+          <div className="flex items-center space-x-2 text-xs text-slate-400">
             <Calendar className="w-3.5 h-3.5" />
-            <span>Key Dates & Terms</span>
+            <span>Contract Terms</span>
           </div>
-          <div className="text-sm font-semibold text-slate-900">
+          <div className="text-sm font-semibold text-slate-200">
             Issue: {formatDate(po.issueDate)}
           </div>
-          <div className="text-xs text-slate-500">Terms: {po.paymentTerms || "NET_30"}</div>
+          <div className="text-[11px] text-slate-400">Payment: {po.paymentTerms || "NET_30"}</div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-1">
-          <div className="flex items-center space-x-2 text-xs text-slate-500">
-            <Receipt className="w-3.5 h-3.5" />
-            <span>Total Financials</span>
+        <div className="glass-card p-5 space-y-1">
+          <div className="flex items-center space-x-2 text-xs text-slate-400">
+            <Receipt className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="uppercase tracking-wider font-semibold">Total Amount</span>
           </div>
-          <div className="text-base font-bold text-emerald-600">
+          <div className="text-xl font-extrabold text-emerald-400 font-mono">
             {formatCurrency(po.totalAmount, po.currency)}
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-[11px] text-slate-400">
             Subtotal: {formatCurrency(po.subtotal, po.currency)} • Tax: {formatCurrency(po.tax, po.currency)}
           </div>
         </div>
       </div>
 
-      {/* Tabs Navigation */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="border-b border-slate-200 flex px-6 space-x-6 text-sm">
+      {/* Tabs Container */}
+      <div className="glass-card overflow-hidden">
+        <div className="border-b border-white/[0.08] flex px-6 space-x-6 text-xs bg-white/[0.02]">
           <button
             onClick={() => setActiveTab("items")}
-            className={`py-4 font-semibold border-b-2 transition ${
+            className={`py-4 font-bold border-b-2 transition ${
               activeTab === "items"
-                ? "border-emerald-600 text-emerald-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
+                ? "border-emerald-400 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
             Extracted Line Items ({po.lineItems?.length || 0})
           </button>
           <button
             onClick={() => setActiveTab("reviews")}
-            className={`py-4 font-semibold border-b-2 transition flex items-center space-x-2 ${
+            className={`py-4 font-bold border-b-2 transition flex items-center space-x-2 ${
               activeTab === "reviews"
-                ? "border-emerald-600 text-emerald-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
+                ? "border-emerald-400 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            <span>Review Center Records</span>
+            <span>Review Exceptions</span>
             {reviews.length > 0 && (
-              <span className="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-800">
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 {reviews.length}
               </span>
             )}
           </button>
           <button
             onClick={() => setActiveTab("audit")}
-            className={`py-4 font-semibold border-b-2 transition ${
+            className={`py-4 font-bold border-b-2 transition ${
               activeTab === "audit"
-                ? "border-emerald-600 text-emerald-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
+                ? "border-emerald-400 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            Agentic Audit Trail ({auditLogs.length})
+            Audit Trail ({auditLogs.length})
           </button>
           <button
             onClick={() => setActiveTab("document")}
-            className={`py-4 font-semibold border-b-2 transition ${
+            className={`py-4 font-bold border-b-2 transition ${
               activeTab === "document"
-                ? "border-emerald-600 text-emerald-700"
-                : "border-transparent text-slate-500 hover:text-slate-700"
+                ? "border-emerald-400 text-emerald-300"
+                : "border-transparent text-slate-400 hover:text-slate-200"
             }`}
           >
-            Original Document Preview
+            Document Viewer
           </button>
         </div>
 
         <div className="p-6">
-          {/* Line Items Tab */}
+          {/* Line Items Table */}
           {activeTab === "items" && (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase">
+                  <tr className="border-b border-white/[0.08] text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                     <th className="py-3 px-4">Line #</th>
-                    <th className="py-3 px-4">SKU / Code</th>
+                    <th className="py-3 px-4">Product Code</th>
                     <th className="py-3 px-4">Description</th>
                     <th className="py-3 px-4">GST Number</th>
                     <th className="py-3 px-4 text-right">Quantity</th>
@@ -330,22 +338,22 @@ export const PODetailsPage: React.FC = () => {
                     <th className="py-3 px-4 text-right">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-white/[0.04]">
                   {po.lineItems?.map((item) => (
-                    <tr key={item.lineNumber} className="hover:bg-slate-50">
-                      <td className="py-3.5 px-4 font-mono text-slate-500">{item.lineNumber}</td>
-                      <td className="py-3.5 px-4 font-semibold font-mono text-slate-800">
+                    <tr key={item.lineNumber} className="hover:bg-white/[0.02]">
+                      <td className="py-3 px-4 font-mono text-slate-400">{item.lineNumber}</td>
+                      <td className="py-3 px-4 font-mono font-semibold text-emerald-300">
                         {item.productCode}
                       </td>
-                      <td className="py-3.5 px-4 text-slate-700">{item.description}</td>
-                      <td className="py-3.5 px-4 font-mono text-xs text-slate-600">
+                      <td className="py-3 px-4 text-slate-300">{item.description}</td>
+                      <td className="py-3 px-4 font-mono text-slate-400">
                         {item.gstNumber || po.gstNumber || "—"}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-medium">{item.quantity}</td>
-                      <td className="py-3.5 px-4 text-right text-slate-700">
+                      <td className="py-3 px-4 text-right font-medium text-slate-200">{item.quantity}</td>
+                      <td className="py-3 px-4 text-right font-mono text-slate-300">
                         {formatCurrency(item.unitPrice, po.currency)}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-semibold text-slate-900">
+                      <td className="py-3 px-4 text-right font-mono font-bold text-white">
                         {formatCurrency(item.lineTotal, po.currency)}
                       </td>
                     </tr>
@@ -355,29 +363,29 @@ export const PODetailsPage: React.FC = () => {
             </div>
           )}
 
-          {/* Human Review Records List Tab (§Part C §10 & §11.2) */}
+          {/* Human Review Records Tab (§Part C §10 & §11.2) */}
           {activeTab === "reviews" && (
             <div className="space-y-4">
               {reviews.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 text-sm">
-                  No human review exceptions logged for this purchase order.
+                <div className="text-center py-8 text-slate-400 text-xs">
+                  No human review exceptions recorded for this purchase order.
                 </div>
               ) : (
                 reviews.map((rev) => (
                   <div
                     key={rev.id}
-                    className="p-5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+                    className="p-5 rounded-xl bg-slate-950/60 border border-white/[0.08] flex flex-col md:flex-row md:items-center md:justify-between gap-4"
                   >
                     <div className="space-y-2">
                       <div className="flex items-center space-x-3">
                         <StageBadge stage={rev.stage} />
                         <span
-                          className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${
+                          className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
                             rev.status === "APPROVED"
-                              ? "bg-emerald-100 text-emerald-800"
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
                               : rev.status === "REJECTED"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-amber-100 text-amber-800"
+                              ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                              : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
                           }`}
                         >
                           {rev.status}
@@ -386,19 +394,14 @@ export const PODetailsPage: React.FC = () => {
                           Agent: {rev.requestedByAgent}
                         </span>
                       </div>
-                      <p className="text-sm font-medium text-slate-800">{rev.reason}</p>
-                      {rev.evidence && rev.evidence.length > 0 && (
-                        <div className="text-xs text-slate-500">
-                          Supporting Evidence: {rev.evidence.length} RAG clauses referenced
-                        </div>
-                      )}
+                      <p className="text-xs font-semibold text-slate-200">{rev.reason}</p>
                     </div>
 
                     <Link
                       to={`/reviews/${rev.id}`}
-                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold self-start md:self-center transition"
+                      className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-obsidian-950 rounded-xl text-xs font-bold transition shadow-neon-emerald"
                     >
-                      Open Review Inspection →
+                      Open Inspection →
                     </Link>
                   </div>
                 ))
@@ -406,36 +409,35 @@ export const PODetailsPage: React.FC = () => {
             </div>
           )}
 
-          {/* Audit Logs Tab (§Part C §11.4) */}
+          {/* Audit Logs Tab */}
           {activeTab === "audit" && (
             <div className="space-y-3">
               {auditLogs.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 text-sm">
+                <div className="text-center py-8 text-slate-400 text-xs">
                   No audit logs recorded for this entity.
                 </div>
               ) : (
                 auditLogs.map((log) => (
                   <div
                     key={log.id}
-                    className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1.5"
+                    className="p-4 rounded-xl bg-slate-950/50 border border-white/[0.06] text-xs space-y-1.5"
                   >
-                    <div className="flex items-center justify-between text-slate-500">
-                      <span className="font-semibold text-slate-800">{log.agentName}</span>
-                      <span className="font-mono">{formatDate(log.timestamp, true)}</span>
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span className="font-bold text-slate-200">{log.agentName}</span>
+                      <span className="font-mono text-[11px]">{formatDate(log.timestamp, true)}</span>
                     </div>
-                    <div className="text-slate-700">{log.summary}</div>
-                    <div className="flex items-center justify-between text-slate-400 pt-1">
-                      <span>Action: <code className="font-mono">{log.action}</code></span>
-                      {log.latency && <span>Latency: {log.latency}ms</span>}
+                    <div className="text-slate-300">{log.summary}</div>
+                    <div className="flex items-center justify-between text-slate-400 pt-1 text-[11px]">
+                      <span>Action: <code className="font-mono text-emerald-400">{log.action}</code></span>
                       {log.traceId && (
                         <a
                           href={`https://smith.langchain.com/trace/${log.traceId}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-600 hover:underline inline-flex items-center"
+                          className="text-emerald-400 hover:underline inline-flex items-center space-x-1"
                         >
-                          <span>View full trace</span>
-                          <ExternalLink className="w-3 h-3 ml-1" />
+                          <span>Full Trace</span>
+                          <ExternalLink className="w-3 h-3" />
                         </a>
                       )}
                     </div>
@@ -445,17 +447,17 @@ export const PODetailsPage: React.FC = () => {
             </div>
           )}
 
-          {/* Document Preview Tab */}
+          {/* Document Preview */}
           {activeTab === "document" && (
-            <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-100 p-4">
+            <div className="border border-white/10 rounded-xl overflow-hidden bg-slate-950/60 p-4">
               {po.documentUrl ? (
                 <iframe
                   src={po.documentUrl}
                   title="Purchase Order PDF"
-                  className="w-full h-[650px] rounded-lg border border-slate-300"
+                  className="w-full h-[650px] rounded-lg border border-white/10"
                 />
               ) : (
-                <div className="py-12 text-center text-slate-500 text-sm">
+                <div className="py-12 text-center text-slate-400 text-xs">
                   No preview available for this document format.
                 </div>
               )}

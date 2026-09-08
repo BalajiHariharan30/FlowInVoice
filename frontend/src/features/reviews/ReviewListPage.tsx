@@ -6,7 +6,7 @@ import { HumanReview, PaginatedResponse, ReviewStage } from "../../types";
 import { formatDate } from "../../lib/format";
 import { StageBadge } from "../../components/ui/StageBadge";
 import { LoadingSkeleton, EmptyState, ErrorBanner } from "../../components/feedback";
-import { CheckSquare, ChevronLeft, ChevronRight } from "lucide-react";
+import { CheckSquare, ChevronLeft, ChevronRight, Sparkles, ArrowUpRight } from "lucide-react";
 
 export const ReviewListPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -52,32 +52,35 @@ export const ReviewListPage: React.FC = () => {
 
   const stages: Array<{ key: string; label: string }> = [
     { key: "", label: "All Stages" },
-    { key: "extraction", label: "Extraction Stage" },
-    { key: "validation", label: "Validation Stage" },
-    { key: "invoice", label: "Invoice Verification Stage" }
+    { key: "extraction", label: "Extraction Exceptions" },
+    { key: "validation", label: "Validation & RAG Deviations" },
+    { key: "invoice", label: "Invoice Discrepancies" }
   ];
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Human Review Center</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Inspect, evaluate RAG evidence, and resolve autonomous agent exceptions across the workflow
+        <div className="flex items-center space-x-2">
+          <h1 className="text-2xl font-bold text-white tracking-tight">Review Center</h1>
+          <Sparkles className="w-4 h-4 text-emerald-400" />
+        </div>
+        <p className="text-xs text-slate-400 mt-1">
+          Inspect, evaluate RAG evidence citations, and decide autonomous agent exceptions across all workflow checkpoints
         </p>
       </div>
 
-      {/* Stage Filter Tabs (§Part C §11.2) */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200">
+      {/* Glammorphic Stage Filter Tabs (§Part C §11.2) */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-white/[0.08]">
         <div className="flex space-x-6 overflow-x-auto">
           {stages.map((st) => (
             <button
               key={st.key}
               onClick={() => handleStageTab(st.key)}
-              className={`py-3 text-sm font-semibold border-b-2 transition whitespace-nowrap ${
+              className={`py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 transition whitespace-nowrap ${
                 stageFilter === st.key
-                  ? "border-emerald-600 text-emerald-700"
-                  : "border-transparent text-slate-500 hover:text-slate-700"
+                  ? "border-emerald-400 text-emerald-300 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]"
+                  : "border-transparent text-slate-400 hover:text-slate-200"
               }`}
             >
               {st.label}
@@ -86,13 +89,13 @@ export const ReviewListPage: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-2 pb-2 sm:pb-0 text-xs">
-          <span className="text-slate-500">Status:</span>
+          <span className="text-slate-400">Status:</span>
           <select
             value={statusFilter}
             onChange={(e) => handleStatusFilter(e.target.value)}
-            className="px-2.5 py-1 bg-white border border-slate-200 rounded text-slate-700 font-medium focus:outline-none"
+            className="px-3 py-1.5 bg-slate-950/60 border border-white/10 rounded-xl text-slate-200 font-medium focus:outline-none"
           >
-            <option value="PENDING">Pending Action</option>
+            <option value="PENDING">Pending Review</option>
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
             <option value="">All Statuses</option>
@@ -113,47 +116,47 @@ export const ReviewListPage: React.FC = () => {
       ) : !data || data.data.length === 0 ? (
         <EmptyState
           title="No pending review items"
-          description="All autonomous processing stages are clear of exceptions."
+          description="All autonomous processing stages are operating cleanly without exceptions."
         />
       ) : (
         <div className="space-y-3">
           {data.data.map((review) => (
             <div
               key={review.id}
-              className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition flex flex-col md:flex-row md:items-center justify-between gap-4"
+              className="glass-card-hover p-5 flex flex-col md:flex-row md:items-center justify-between gap-4"
             >
-              <div className="space-y-2 max-w-2xl">
+              <div className="space-y-2.5 max-w-2xl">
                 <div className="flex items-center space-x-3">
                   <StageBadge stage={review.stage} />
                   <span
-                    className={`text-xs px-2 py-0.5 rounded font-bold uppercase ${
+                    className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                       review.priority === "CRITICAL"
-                        ? "bg-red-100 text-red-800"
+                        ? "bg-rose-500/20 text-rose-300 border border-rose-500/30"
                         : review.priority === "HIGH"
-                        ? "bg-orange-100 text-orange-800"
-                        : "bg-slate-100 text-slate-800"
+                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                        : "bg-slate-800 text-slate-400 border border-slate-700"
                     }`}
                   >
                     {review.priority} Priority
                   </span>
-                  <span className="text-xs text-slate-500 font-mono">
+                  <span className="text-xs text-slate-400 font-mono">
                     By: {review.requestedByAgent}
                   </span>
                 </div>
 
-                <h3 className="text-base font-semibold text-slate-900">{review.reason}</h3>
+                <h3 className="text-sm font-semibold text-white tracking-tight">{review.reason}</h3>
 
-                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-400">
                   <span>Logged: {formatDate(review.createdAt, true)}</span>
                   {review.expectedValue && (
-                    <span>Expected: <strong className="text-slate-800">{review.expectedValue}</strong></span>
+                    <span>Expected: <strong className="text-slate-200">{review.expectedValue}</strong></span>
                   )}
                   {review.actualValue && (
-                    <span>Actual: <strong className="text-slate-800">{review.actualValue}</strong></span>
+                    <span>Actual: <strong className="text-slate-200">{review.actualValue}</strong></span>
                   )}
                   {review.evidence && review.evidence.length > 0 && (
-                    <span className="text-emerald-700 font-medium">
-                      ✓ {review.evidence.length} RAG Evidence Sources Attached
+                    <span className="text-emerald-400 font-semibold flex items-center space-x-1">
+                      <span>✓ {review.evidence.length} Vector Citations Attached</span>
                     </span>
                   )}
                 </div>
@@ -162,19 +165,20 @@ export const ReviewListPage: React.FC = () => {
               <div className="flex items-center space-x-3 self-end md:self-center">
                 <Link
                   to={`/reviews/${review.id}`}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+                  className="inline-flex items-center space-x-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-obsidian-950 rounded-xl text-xs font-bold transition shadow-neon-emerald"
                 >
-                  Review & Decide →
+                  <span>Inspect Decision</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
             </div>
           ))}
 
           {/* Pagination */}
-          <div className="p-4 bg-white rounded-xl border border-slate-200 flex items-center justify-between text-xs text-slate-500">
+          <div className="p-4 glass-card flex items-center justify-between text-xs text-slate-400">
             <div>
-              Showing Page <span className="font-semibold text-slate-800">{page}</span> of{" "}
-              <span className="font-semibold text-slate-800">{data.pagination.totalPages || 1}</span>
+              Showing Page <span className="font-semibold text-slate-200">{page}</span> of{" "}
+              <span className="font-semibold text-slate-200">{data.pagination.totalPages || 1}</span>
             </div>
             <div className="flex items-center space-x-2">
               <button
@@ -184,7 +188,7 @@ export const ReviewListPage: React.FC = () => {
                   setSearchParams(next);
                 }}
                 disabled={page <= 1}
-                className="p-1.5 rounded border border-slate-200 disabled:opacity-40"
+                className="p-1.5 rounded-lg border border-white/10 hover:bg-white/[0.05] disabled:opacity-30"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -195,7 +199,7 @@ export const ReviewListPage: React.FC = () => {
                   setSearchParams(next);
                 }}
                 disabled={page >= data.pagination.totalPages}
-                className="p-1.5 rounded border border-slate-200 disabled:opacity-40"
+                className="p-1.5 rounded-lg border border-white/10 hover:bg-white/[0.05] disabled:opacity-30"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

@@ -12,7 +12,9 @@ import {
   Receipt,
   TrendingUp,
   UploadCloud,
-  ArrowUpRight
+  ArrowUpRight,
+  Sparkles,
+  Zap
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -56,7 +58,7 @@ export const DashboardPage: React.FC = () => {
   const chartData = useMemo(() => {
     if (!analytics?.volumeTrends) return [];
     return analytics.volumeTrends.map((v) => ({
-      date: v.date.slice(5), // MM-DD
+      date: v.date.slice(5),
       count: v.count,
       amount: v.amount
     }));
@@ -92,134 +94,180 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="space-y-8">
-      {/* Page Header with Action Button */}
+      {/* Top Banner & Quick Action */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Executive Dashboard</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Real-time PO intake, Agentic RAG validation, and automated invoicing metrics
+          <div className="flex items-center space-x-2">
+            <h1 className="text-2xl font-bold text-white tracking-tight">Mission Control</h1>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              Live Pipeline
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Real-time autonomous PO intake, Agentic RAG contract compliance, and invoice verification
           </p>
         </div>
-        <div className="flex items-center space-x-3">
-          <Link
-            to="/pos/upload"
-            className="flex items-center space-x-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg shadow-sm transition"
-          >
-            <UploadCloud className="w-4 h-4" />
-            <span>Upload Purchase Order</span>
-          </Link>
-        </div>
+
+        <Link
+          to="/pos/upload"
+          className="flex items-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-400 hover:from-emerald-500 hover:to-teal-300 text-obsidian-950 text-xs font-bold rounded-xl shadow-neon-emerald transition-all duration-200 transform hover:-translate-y-0.5"
+        >
+          <UploadCloud className="w-4 h-4" />
+          <span>Upload Purchase Order</span>
+        </Link>
       </div>
 
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Total POs</span>
-            <FileText className="w-4 h-4 text-slate-400" />
+      {/* Glammorphic KPI Cards Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Total POs Card */}
+        <div className="glass-card-hover p-5 relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-slate-500 to-transparent opacity-60"></div>
+          <div className="flex items-center justify-between text-slate-400 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Total Received</span>
+            <div className="p-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-slate-300">
+              <FileText className="w-4 h-4" />
+            </div>
           </div>
-          <div className="text-2xl font-bold text-slate-900">{summary?.totalPOs ?? 0}</div>
-          <div className="text-xs text-slate-400 mt-2">All received documents</div>
+          <div className="text-2xl font-extrabold text-white tracking-tight">
+            {summary?.totalPOs ?? 0}
+          </div>
+          <div className="text-[11px] text-slate-400 mt-2 flex items-center space-x-1">
+            <Zap className="w-3 h-3 text-slate-400" />
+            <span>Autonomous Ingestion</span>
+          </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Approved POs</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+        {/* Approved POs Card */}
+        <div className="glass-card-hover p-5 relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-emerald-500 to-transparent"></div>
+          <div className="flex items-center justify-between text-emerald-400/80 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Validated Commercially</span>
+            <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
           </div>
-          <div className="text-2xl font-bold text-slate-900">{summary?.approvedPOs ?? 0}</div>
-          <div className="text-xs text-emerald-600 font-medium mt-2">Validated commercially</div>
+          <div className="text-2xl font-extrabold text-emerald-400 tracking-tight">
+            {summary?.approvedPOs ?? 0}
+          </div>
+          <div className="text-[11px] text-emerald-400/80 mt-2 font-medium">
+            RAG & pricing compliant
+          </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Pending Reviews</span>
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
+        {/* Pending Reviews Card */}
+        <div className="glass-card-hover p-5 relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-500 to-transparent"></div>
+          <div className="flex items-center justify-between text-amber-400/80 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Human Reviews</span>
+            <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-400">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
           </div>
-          <div className="text-2xl font-bold text-amber-600">{summary?.pendingReviews ?? 0}</div>
-          <Link to="/reviews" className="text-xs text-amber-700 hover:underline mt-2 inline-flex items-center">
-            <span>Requires human action</span>
-            <ArrowUpRight className="w-3 h-3 ml-0.5" />
+          <div className="text-2xl font-extrabold text-amber-400 tracking-tight">
+            {summary?.pendingReviews ?? 0}
+          </div>
+          <Link
+            to="/reviews"
+            className="text-[11px] text-amber-400 hover:text-amber-300 font-medium mt-2 inline-flex items-center space-x-1"
+          >
+            <span>Inspect exceptions</span>
+            <ArrowUpRight className="w-3 h-3" />
           </Link>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Total Invoiced</span>
-            <Receipt className="w-4 h-4 text-blue-500" />
+        {/* Total Invoiced Card */}
+        <div className="glass-card-hover p-5 relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-blue-500 to-transparent"></div>
+          <div className="flex items-center justify-between text-blue-400/80 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Invoiced</span>
+            <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/25 text-blue-400">
+              <Receipt className="w-4 h-4" />
+            </div>
           </div>
-          <div className="text-2xl font-bold text-slate-900">
+          <div className="text-2xl font-extrabold text-blue-300 font-mono tracking-tight">
             {formatCurrency(summary?.totalInvoicedAmount ?? 0)}
           </div>
-          <div className="text-xs text-slate-400 mt-2">Issued invoices sum</div>
+          <div className="text-[11px] text-slate-400 mt-2 font-medium">
+            Issued PDF invoices
+          </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Accuracy</span>
-            <TrendingUp className="w-4 h-4 text-indigo-500" />
+        {/* Processing Accuracy Card */}
+        <div className="glass-card-hover p-5 relative overflow-hidden flex flex-col justify-between">
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-purple-500 to-transparent"></div>
+          <div className="flex items-center justify-between text-purple-400/80 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">OCR Precision</span>
+            <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/25 text-purple-400">
+              <TrendingUp className="w-4 h-4" />
+            </div>
           </div>
-          <div className="text-2xl font-bold text-slate-900">
+          <div className="text-2xl font-extrabold text-purple-300 tracking-tight">
             {formatPercent(summary?.processingAccuracy ?? 98.5)}
           </div>
-          <div className="text-xs text-indigo-600 font-medium mt-2">Extraction confidence</div>
+          <div className="text-[11px] text-purple-400/80 mt-2 font-medium">
+            Deterministic verification
+          </div>
         </div>
       </div>
 
       {/* Analytics Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* PO Intake & Value Trends */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        {/* PO Flow Trend Chart */}
+        <div className="lg:col-span-2 glass-card p-6 relative overflow-hidden">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="text-base font-bold text-slate-900">PO Intake & Processing Trend</h3>
-              <p className="text-xs text-slate-500">Document volume over the past 30 days</p>
+              <h3 className="text-sm font-bold text-white tracking-wide">Autonomous Intake & Volume Velocity</h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">PO activity and financial volume over the past 30 days</p>
             </div>
-            <div className="flex items-center space-x-2 text-xs">
-              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-              <span className="text-slate-600">PO Inflow</span>
+            <div className="flex items-center space-x-2 text-[11px]">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
+              <span className="text-slate-300 font-medium">Daily Documents</span>
             </div>
           </div>
+
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData.length > 0 ? chartData : [{ date: "Today", count: 1, amount: 1500 }]}>
                 <defs>
-                  <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
+                  <linearGradient id="glamEmerald" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
                     <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="date" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: "#1e293b",
-                    borderRadius: "8px",
-                    border: "none",
-                    color: "#fff",
-                    fontSize: "12px"
+                    backgroundColor: "rgba(10, 15, 29, 0.9)",
+                    backdropFilter: "blur(12px)",
+                    borderRadius: "12px",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                    color: "#f8fafc",
+                    fontSize: "11px",
+                    boxShadow: "0 8px 32px 0 rgba(0,0,0,0.4)"
                   }}
                 />
                 <Area
                   type="monotone"
                   dataKey="count"
-                  stroke="#10b981"
-                  strokeWidth={2}
+                  stroke="#34d399"
+                  strokeWidth={2.5}
                   fillOpacity={1}
-                  fill="url(#colorCount)"
+                  fill="url(#glamEmerald)"
                 />
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Status Breakdown Chart */}
-        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        {/* Pipeline Distribution Chart */}
+        <div className="glass-card p-6 relative overflow-hidden">
           <div className="mb-6">
-            <h3 className="text-base font-bold text-slate-900">Pipeline Status Breakdown</h3>
-            <p className="text-xs text-slate-500">Active distribution in the 13-stage workflow</p>
+            <h3 className="text-sm font-bold text-white tracking-wide">13-Stage Pipeline State Breakdown</h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">Active load across autonomous agent nodes</p>
           </div>
+
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -230,19 +278,20 @@ export const DashboardPage: React.FC = () => {
                 }
                 layout="vertical"
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <YAxis dataKey="status" type="category" width={110} stroke="#94a3b8" fontSize={10} tickLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                <XAxis type="number" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis dataKey="status" type="category" width={110} stroke="#94a3b8" fontSize={9} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: "#1e293b",
-                    borderRadius: "8px",
-                    border: "none",
-                    color: "#fff",
-                    fontSize: "12px"
+                    backgroundColor: "rgba(10, 15, 29, 0.9)",
+                    backdropFilter: "blur(12px)",
+                    borderRadius: "12px",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                    color: "#f8fafc",
+                    fontSize: "11px"
                   }}
                 />
-                <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="count" fill="#38bdf8" radius={[0, 6, 6, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

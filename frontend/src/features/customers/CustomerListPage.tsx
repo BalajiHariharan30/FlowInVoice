@@ -37,22 +37,25 @@ export const CustomerListPage: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Customers & Contracts</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
+          <Building2 className="w-6 h-6 text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+          <span>Customers & Contracts</span>
+        </h1>
+        <p className="text-xs text-slate-400 mt-1">
           Directory of client accounts and their governing Master Services & Pricing Agreements (1-to-N)
         </p>
       </div>
 
       {/* Search Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+      <div className="glass-card p-4 rounded-2xl flex items-center justify-between shadow-glass">
         <form onSubmit={handleSearch} className="relative w-full max-w-md">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search customers by name, code or email..."
-            className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+            className="w-full pl-10 pr-4 py-2 bg-obsidian-card/60 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition backdrop-blur-md"
           />
         </form>
       </div>
@@ -73,11 +76,11 @@ export const CustomerListPage: React.FC = () => {
           description="Customers are registered during onboarding or auto-provisioned upon verified PO receipt."
         />
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="glass-card rounded-2xl overflow-hidden shadow-glass">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase">
+                <tr className="bg-white/[0.02] border-b border-white/10 text-[11px] font-mono font-semibold text-slate-400 uppercase tracking-wider">
                   <th className="py-3.5 px-6">Customer Name</th>
                   <th className="py-3.5 px-6">Account Code</th>
                   <th className="py-3.5 px-6">Billing Email</th>
@@ -87,30 +90,34 @@ export const CustomerListPage: React.FC = () => {
                   <th className="py-3.5 px-6 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-white/[0.04]">
                 {data.data.map((cust) => (
-                  <tr key={cust.id} className="hover:bg-slate-50 transition">
-                    <td className="py-4 px-6 font-bold text-slate-900">
-                      <Link to={`/customers/${cust.id}`} className="hover:text-emerald-600">
+                  <tr key={cust.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="py-4 px-6 font-bold text-white">
+                      <Link to={`/customers/${cust.id}`} className="hover:text-emerald-400 transition-colors">
                         {cust.name}
                       </Link>
                     </td>
-                    <td className="py-4 px-6 font-mono text-xs text-slate-600">{cust.code}</td>
-                    <td className="py-4 px-6 text-slate-600">{cust.email}</td>
-                    <td className="py-4 px-6 font-mono text-xs text-slate-600">
+                    <td className="py-4 px-6">
+                      <span className="font-mono text-xs text-slate-300 bg-white/[0.04] px-2 py-0.5 rounded border border-white/5">
+                        {cust.code}
+                      </span>
+                    </td>
+                    <td className="py-4 px-6 text-slate-400 font-mono text-xs">{cust.email}</td>
+                    <td className="py-4 px-6 font-mono text-xs text-emerald-400/90">
                       {cust.gstNumber || "—"}
                     </td>
-                    <td className="py-4 px-6 text-slate-600">{cust.paymentTerms}</td>
+                    <td className="py-4 px-6 text-slate-300 text-xs font-mono">{cust.paymentTerms}</td>
                     <td className="py-4 px-6">
-                      <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200">
-                        <FileText className="w-3 h-3" />
+                      <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                        <FileText className="w-3 h-3 text-purple-400" />
                         <span>{cust.contractCount ?? 1} Agreement(s)</span>
                       </span>
                     </td>
                     <td className="py-4 px-6 text-right">
                       <Link
                         to={`/customers/${cust.id}`}
-                        className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline"
+                        className="text-xs font-bold text-emerald-400 hover:text-emerald-300 transition-colors inline-flex items-center gap-1 hover:underline"
                       >
                         Inspect Contracts →
                       </Link>
@@ -122,7 +129,7 @@ export const CustomerListPage: React.FC = () => {
           </div>
 
           {/* Pagination */}
-          <div className="p-4 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
+          <div className="p-4 border-t border-white/10 flex items-center justify-between text-xs text-slate-400 font-mono">
             <div>
               Page {page} of {data.pagination.totalPages || 1}
             </div>
@@ -134,7 +141,7 @@ export const CustomerListPage: React.FC = () => {
                   setSearchParams(next);
                 }}
                 disabled={page <= 1}
-                className="p-1.5 rounded border border-slate-200 disabled:opacity-40"
+                className="p-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 disabled:opacity-30 transition"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
@@ -145,7 +152,7 @@ export const CustomerListPage: React.FC = () => {
                   setSearchParams(next);
                 }}
                 disabled={page >= data.pagination.totalPages}
-                className="p-1.5 rounded border border-slate-200 disabled:opacity-40"
+                className="p-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 disabled:opacity-30 transition"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

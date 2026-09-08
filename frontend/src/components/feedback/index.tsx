@@ -1,12 +1,14 @@
 import React from "react";
-import { AlertCircle, FileQuestion, RefreshCw } from "lucide-react";
+import { AlertCircle, FileQuestion, RefreshCw, Sparkles } from "lucide-react";
 
 export const LoadingSkeleton: React.FC<{ rows?: number }> = ({ rows = 5 }) => (
-  <div className="w-full space-y-4 animate-pulse p-4">
-    <div className="h-8 bg-slate-200 rounded w-1/4"></div>
-    {Array.from({ length: rows }).map((_, i) => (
-      <div key={i} className="h-12 bg-slate-100 rounded w-full"></div>
-    ))}
+  <div className="w-full space-y-4 p-6 glass-card animate-pulse">
+    <div className="h-7 bg-white/[0.06] rounded-xl w-1/4"></div>
+    <div className="space-y-3 pt-2">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="h-14 bg-white/[0.03] rounded-xl w-full border border-white/[0.04]"></div>
+      ))}
+    </div>
   </div>
 );
 
@@ -16,14 +18,16 @@ export const EmptyState: React.FC<{
   actionLabel?: string;
   onAction?: () => void;
 }> = ({ title, description, actionLabel, onAction }) => (
-  <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-lg border border-slate-200">
-    <FileQuestion className="w-12 h-12 text-slate-400 mb-3" />
-    <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
-    {description && <p className="text-sm text-slate-500 mt-1 max-w-sm">{description}</p>}
+  <div className="flex flex-col items-center justify-center p-14 text-center glass-card border-dashed">
+    <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-slate-400 mb-4 shadow-glass-sm">
+      <FileQuestion className="w-7 h-7 text-slate-300" />
+    </div>
+    <h3 className="text-base font-bold text-slate-100">{title}</h3>
+    {description && <p className="text-xs text-slate-400 mt-1 max-w-sm">{description}</p>}
     {actionLabel && onAction && (
       <button
         onClick={onAction}
-        className="mt-4 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-sm font-medium transition"
+        className="mt-5 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white rounded-xl text-xs font-semibold shadow-neon-emerald transition-all duration-200"
       >
         {actionLabel}
       </button>
@@ -37,14 +41,18 @@ export const ErrorBanner: React.FC<{
   requestId?: string;
   onRetry?: () => void;
 }> = ({ message, code, requestId, onRetry }) => (
-  <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 flex items-start justify-between">
+  <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 backdrop-blur-xl text-rose-200 flex items-start justify-between shadow-[0_0_20px_-3px_rgba(244,63,94,0.2)]">
     <div className="flex items-start space-x-3">
-      <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+      <div className="p-1 rounded-lg bg-rose-500/20 text-rose-300 mt-0.5">
+        <AlertCircle className="w-4 h-4" />
+      </div>
       <div>
-        <h4 className="text-sm font-bold">{code ? `${code}: ` : ""}{message}</h4>
+        <h4 className="text-xs font-bold text-rose-100">
+          {code ? `${code}: ` : ""}{message}
+        </h4>
         {requestId && (
-          <p className="text-xs text-red-600 mt-1">
-            Support Trace ID: <span className="font-mono">{requestId}</span>
+          <p className="text-[11px] text-rose-300/80 mt-1 font-mono">
+            Trace ID: <span className="underline decoration-rose-500/40">{requestId}</span>
           </p>
         )}
       </div>
@@ -52,7 +60,7 @@ export const ErrorBanner: React.FC<{
     {onRetry && (
       <button
         onClick={onRetry}
-        className="flex items-center space-x-1 text-xs font-semibold px-2.5 py-1.5 bg-red-100 hover:bg-red-200 text-red-900 rounded transition"
+        className="flex items-center space-x-1.5 text-xs font-semibold px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-100 rounded-lg border border-rose-500/30 transition"
       >
         <RefreshCw className="w-3.5 h-3.5" />
         <span>Retry</span>

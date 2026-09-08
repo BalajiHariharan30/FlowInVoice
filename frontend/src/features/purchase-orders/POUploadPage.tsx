@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../../lib/axios";
-import { UploadCloud, FileText, CheckCircle2, AlertCircle, X, ArrowLeft } from "lucide-react";
+import { UploadCloud, FileText, CheckCircle2, AlertCircle, X, ArrowLeft, Sparkles } from "lucide-react";
 
 export const POUploadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -49,7 +49,6 @@ export const POUploadPage: React.FC = () => {
     abortControllerRef.current = new AbortController();
 
     try {
-      // POST /pos returns 202 Accepted with { poId, jobId, status: "PROCESSING" } per §B3 / §C4.3
       const response = await apiClient.post("/pos", formData, {
         headers: { "Content-Type": "multipart/form-data" },
         signal: abortControllerRef.current.signal,
@@ -61,10 +60,8 @@ export const POUploadPage: React.FC = () => {
         }
       });
 
-      // Assert 202 Accepted status explicitly per §C4.3
       if (response.status === 202 || response.status === 200) {
         const { poId } = response.data;
-        // Immediately navigate to /pos/:poId
         navigate(`/pos/${poId}`);
       }
     } catch (err: any) {
@@ -88,30 +85,35 @@ export const POUploadPage: React.FC = () => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      {/* Header */}
       <div className="flex items-center space-x-3">
         <button
           onClick={() => navigate("/pos")}
-          className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 transition"
+          className="p-2 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/[0.05] transition"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Upload Purchase Order</h1>
-          <p className="text-sm text-slate-500">
-            Intake customer PO documents into the automated AI extraction and verification pipeline
+          <div className="flex items-center space-x-2">
+            <h1 className="text-2xl font-bold text-white tracking-tight">Intake Purchase Order</h1>
+            <Sparkles className="w-4 h-4 text-emerald-400" />
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Submit customer PO for automatic OCR extraction, math verification, and contract RAG validation
           </p>
         </div>
       </div>
 
       {errorMessage && (
-        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 flex items-center space-x-3 text-sm">
-          <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 flex items-center space-x-3 text-xs">
+          <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
           <span>{errorMessage}</span>
         </div>
       )}
 
-      <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-        {/* Drag & Drop Box */}
+      {/* Main Glammorphic Card */}
+      <div className="glass-card p-8 space-y-6">
+        {/* Interactive Dropzone */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -119,16 +121,14 @@ export const POUploadPage: React.FC = () => {
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          className={`border-2 border-dashed rounded-xl p-10 text-center transition cursor-pointer ${
+          onClick={() => document.getElementById("file-input")?.click()}
+          className={`relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer overflow-hidden ${
             isDragging
-              ? "border-emerald-500 bg-emerald-50/50"
+              ? "border-emerald-400 bg-emerald-500/10 shadow-neon-emerald"
               : file
-              ? "border-slate-300 bg-slate-50/50"
-              : "border-slate-300 hover:border-slate-400 bg-slate-50/30"
+              ? "border-emerald-500/40 bg-emerald-950/20"
+              : "border-white/10 hover:border-emerald-500/30 bg-slate-950/40 hover:bg-slate-900/40"
           }`}
-          onClick={() => {
-            document.getElementById("file-input")?.click();
-          }}
         >
           <input
             id="file-input"
@@ -143,31 +143,31 @@ export const POUploadPage: React.FC = () => {
           />
 
           <div className="flex flex-col items-center justify-center space-y-3">
-            <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
-              <UploadCloud className="w-7 h-7" />
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-neon-emerald">
+              <UploadCloud className="w-8 h-8" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-800">
-                Click to browse or drag and drop your Purchase Order here
+              <p className="text-sm font-semibold text-slate-200">
+                Click to browse or drop your purchase order here
               </p>
-              <p className="text-xs text-slate-500 mt-1">
-                Supports PDF, Scanned Images (PNG, JPG, TIFF) up to 25 MB
+              <p className="text-xs text-slate-400 mt-1">
+                Accepts PDF, Scanned TIFF, PNG, JPEG up to 25 MB
               </p>
             </div>
           </div>
         </div>
 
-        {/* Selected File Card */}
+        {/* Selected File Pill */}
         {file && (
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+          <div className="p-4 rounded-xl bg-slate-950/50 border border-white/10 flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+              <div className="w-10 h-10 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
                 <FileText className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-sm font-semibold text-slate-800">{file.name}</div>
-                <div className="text-xs text-slate-500">
-                  {(file.size / (1024 * 1024)).toFixed(2)} MB • {file.type || "Document"}
+                <div className="text-xs font-bold text-slate-100">{file.name}</div>
+                <div className="text-[11px] text-slate-400">
+                  {(file.size / (1024 * 1024)).toFixed(2)} MB • {file.type || "PDF Document"}
                 </div>
               </div>
             </div>
@@ -175,7 +175,7 @@ export const POUploadPage: React.FC = () => {
             {!isUploading && (
               <button
                 onClick={() => setFile(null)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200 transition"
+                className="p-1.5 text-slate-400 hover:text-rose-300 rounded-lg hover:bg-rose-500/10 transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -183,37 +183,40 @@ export const POUploadPage: React.FC = () => {
           </div>
         )}
 
-        {/* Upload Progress Bar */}
+        {/* Shimmer Progress Meter */}
         {isUploading && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-600">
-              <span>Uploading document to secure tenant storage...</span>
-              <span className="font-semibold">{uploadProgress}%</span>
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span className="flex items-center space-x-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Uploading to isolated tenant S3 vault...</span>
+              </span>
+              <span className="font-mono font-bold text-emerald-400">{uploadProgress}%</span>
             </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-950/60 h-2.5 rounded-full overflow-hidden border border-white/10">
               <div
-                className="bg-emerald-500 h-full transition-all duration-200"
+                className="bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 h-full transition-all duration-200 shadow-neon-emerald"
                 style={{ width: `${uploadProgress}%` }}
               ></div>
             </div>
-            <div className="flex justify-end mt-2">
+            <div className="flex justify-end pt-1">
               <button
                 onClick={handleCancel}
-                className="text-xs text-red-600 hover:underline"
+                className="text-[11px] text-rose-400 hover:underline"
               >
-                Cancel upload
+                Cancel ingestion
               </button>
             </div>
           </div>
         )}
 
-        {/* Action Button */}
-        <div className="pt-2 flex justify-end space-x-3">
+        {/* Buttons */}
+        <div className="pt-2 flex justify-end space-x-3 border-t border-white/[0.06]">
           <button
             type="button"
             onClick={() => navigate("/pos")}
             disabled={isUploading}
-            className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition disabled:opacity-50"
+            className="px-4 py-2.5 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 hover:bg-white/[0.04] transition disabled:opacity-40"
           >
             Cancel
           </button>
@@ -221,10 +224,10 @@ export const POUploadPage: React.FC = () => {
             type="button"
             onClick={handleUpload}
             disabled={!file || isUploading}
-            className="flex items-center space-x-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50 shadow-sm"
+            className="flex items-center space-x-2 px-6 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-400 hover:from-emerald-500 hover:to-teal-300 text-obsidian-950 rounded-xl text-xs font-bold transition-all duration-200 disabled:opacity-40 shadow-neon-emerald"
           >
             <UploadCloud className="w-4 h-4" />
-            <span>{isUploading ? "Processing Document..." : "Submit for Processing"}</span>
+            <span>{isUploading ? "Ingesting Document..." : "Launch Autonomous Pipeline"}</span>
           </button>
         </div>
       </div>
