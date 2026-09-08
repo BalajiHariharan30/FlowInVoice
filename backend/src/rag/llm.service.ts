@@ -53,7 +53,7 @@ export class LLMService {
         const parsed = schema.parse(JSON.parse(res.content));
         return {
           data: parsed,
-          model: "llama-3.3-70b-versatile",
+          model: "openai/gpt-oss-120b",
           latencyMs: Date.now() - startTime,
           tokens: res.tokens
         };
@@ -123,7 +123,7 @@ export class LLMService {
         Authorization: `Bearer ${env.GROQ_API_KEY}`
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
+        model: "openai/gpt-oss-120b",
         messages,
         response_format: { type: "json_object" }
       })
