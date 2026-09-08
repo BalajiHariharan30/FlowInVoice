@@ -23,17 +23,21 @@ export class QueueManager {
         port: env.REDIS_PORT,
         password: env.REDIS_PASSWORD || undefined,
         maxRetriesPerRequest: null,
-        connectTimeout: 2000
+        connectTimeout: 1000,
+        enableOfflineQueue: false,
+        retryStrategy: () => null,
+        lazyConnect: true
       });
 
-      this.redisConnection.on("error", (err) => {
+      this.redisConnection.on("error", () => {
         if (!this.isMock) {
           logger.warn("Redis connection failed. Switching to local in-memory async runner");
           this.isMock = true;
         }
       });
 
-      // Try pinging Redis
+      // Try connecting and pinging Redis
+      await this.redisConnection.connect();
       await this.redisConnection.ping();
 
       this.poQueue = new Queue("po-processing", {
@@ -56,6 +60,12 @@ export class QueueManager {
 
       logger.info("BullMQ queues & workers initialized");
     } catch (err) {
+      if (this.redisConnection) {
+        try {
+          this.redisConnection.disconnect();
+        } catch (_) {}
+        this.redisConnection = null;
+      }
       logger.warn("Operating with in-process asynchronous queue runner");
       this.isMock = true;
     }
