@@ -33,15 +33,32 @@ authRouter.post("/login", async (req: Request, res: Response): Promise<void> => 
 
   let user = await UserRepository.findByEmail(tenantId, email);
 
-  // Auto-seed demo admin user if not present
-  if (!user && (email === "admin@p2i.ai" || email === "finance@p2i.ai")) {
+  // Auto-seed demo users if not present
+  const isDemoEmail =
+    email.endsWith("@flowinvoice.ai") ||
+    email.endsWith("@p2i.ai") ||
+    email === "admin@p2i.ai" ||
+    email === "finance@p2i.ai";
+
+  if (!user && isDemoEmail) {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
+    let role: "ADMIN" | "FINANCE" | "REVIEWER" = "ADMIN";
+    let name = "Enterprise Administrator";
+
+    if (email.startsWith("finance")) {
+      role = "FINANCE";
+      name = "Sarah Chen (Finance Lead)";
+    } else if (email.startsWith("reviewer")) {
+      role = "REVIEWER";
+      name = "David Kim (Compliance Reviewer)";
+    }
+
     user = await UserRepository.create(tenantId, {
       email,
-      name: email.startsWith("admin") ? "Enterprise Administrator" : "Finance Specialist",
+      name,
       passwordHash,
-      role: email.startsWith("admin") ? "ADMIN" : "FINANCE",
+      role,
       isActive: true
     });
   }
