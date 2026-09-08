@@ -18,6 +18,12 @@
     background-color: rgba(24, 65, 201, 0.2);
     color: #1841C9;
   }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    color: #000000;
+  }
 }
 
 @layer components {
