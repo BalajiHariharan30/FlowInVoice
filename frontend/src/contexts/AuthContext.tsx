@@ -6,6 +6,9 @@ interface AuthContextType {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  activeTenant: string;
+  setTenant: (tenantId: string) => void;
+  can: (permission: string) => boolean;
   login: (token: string, refreshToken: string, user: AuthUser) => void;
   logout: () => void;
 }
@@ -14,6 +17,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [activeTenant, setActiveTenant] = useState<string>(
+    localStorage.getItem("activeTenant") || "Acme Corporation"
+  );
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const logout = useCallback(() => {
@@ -31,6 +37,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem("tenantId", userData.tenantId);
     setUser(userData);
   }, []);
+
+  const setTenant = useCallback((tenantId: string) => {
+    setActiveTenant(tenantId);
+    localStorage.setItem("activeTenant", tenantId);
+  }, []);
+
+  // Strict RBAC capability evaluator per §25
+  const can = useCallback(
+    (permission: string): boolean => {
+      if (!user) return false;
+      const role = user.role;
+      if (role === "ADMIN") return true;
+
+      switch (permission) {
+        case "po.upload":
+          return ["FINANCE", "OPERATIONS"].includes(role);
+        case "invoice.approve":
+          return role === "FINANCE";
+        case "review.resolve":
+          return ["FINANCE", "OPERATIONS", "REVIEWER"].includes(role);
+        case "settings.manage":
+        case "api.manage":
+          return false;
+        case "view":
+          return true;
+        default:
+          return false;
+      }
+    },
+    [user]
+  );
 
   useEffect(() => {
     const initAuth = async () => {
@@ -70,6 +107,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isAuthenticated: !!user,
         isLoading,
+        activeTenant,
+        setTenant,
+        can,
         login,
         logout
       }}

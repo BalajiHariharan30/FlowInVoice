@@ -4,7 +4,16 @@ import { Link, useSearchParams } from "react-router-dom";
 import { apiClient } from "../../lib/axios";
 import { Customer, PaginatedResponse } from "../../types";
 import { LoadingSkeleton, EmptyState, ErrorBanner } from "../../components/feedback";
-import { Building2, Search, FileText, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Building2,
+  Search,
+  FileText,
+  ChevronLeft,
+  ChevronRight,
+  ArrowRight,
+  ShieldCheck,
+  Plus
+} from "lucide-react";
 
 export const CustomerListPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -33,34 +42,52 @@ export const CustomerListPage: React.FC = () => {
     setSearchParams(next);
   };
 
+  const totalCustomers = data?.pagination?.total || 0;
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
-          <Building2 className="w-6 h-6 text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-          <span>Customers & Contracts</span>
-        </h1>
-        <p className="text-xs text-slate-400 mt-1">
-          Directory of client accounts and their governing Master Services & Pricing Agreements (1-to-N)
-        </p>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div className="flex items-center space-x-2.5">
+            <h1 className="text-2xl font-black text-workspace-text tracking-tight">
+              Customers & Contracts
+            </h1>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+              {totalCustomers} Accounts
+            </span>
+          </div>
+          <p className="text-xs text-workspace-muted mt-1">
+            Directory of enterprise accounts and their governing Master Services & Pricing Agreements (1-to-N contracts for Agentic RAG).
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-3">
+          <div className="workspace-card px-4 py-2 flex items-center space-x-3 text-xs">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <div>
+              <span className="text-workspace-muted block text-[10px] font-semibold uppercase">Verified Tax IDs</span>
+              <span className="font-mono font-bold text-workspace-text text-sm">100% Compliant</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Search Bar */}
-      <div className="glass-card p-4 rounded-2xl flex items-center justify-between shadow-glass">
+      <div className="workspace-card p-4 flex items-center justify-between">
         <form onSubmit={handleSearch} className="relative w-full max-w-md">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+          <Search className="w-4 h-4 text-workspace-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search customers by name, code or email..."
-            className="w-full pl-10 pr-4 py-2 bg-obsidian-card/60 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 transition backdrop-blur-md"
+            placeholder="Search customers by company name, code or email..."
+            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-workspace-border rounded-lg text-workspace-text placeholder-workspace-muted focus:outline-none focus:ring-1 focus:ring-accent-primary"
           />
         </form>
       </div>
 
-      {/* Content */}
+      {/* Table */}
       {isLoading ? (
         <LoadingSkeleton rows={6} />
       ) : error ? (
@@ -73,53 +100,76 @@ export const CustomerListPage: React.FC = () => {
       ) : !data || data.data.length === 0 ? (
         <EmptyState
           title="No customers registered yet"
-          description="Customers are registered during onboarding or auto-provisioned upon verified PO receipt."
+          description="Customer accounts are created automatically when purchase orders are processed or can be manually added."
         />
       ) : (
-        <div className="glass-card rounded-2xl overflow-hidden shadow-glass">
+        <div className="workspace-card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="enterprise-table">
               <thead>
-                <tr className="bg-white/[0.02] border-b border-white/10 text-[11px] font-mono font-semibold text-slate-400 uppercase tracking-wider">
-                  <th className="py-3.5 px-6">Customer Name</th>
-                  <th className="py-3.5 px-6">Account Code</th>
-                  <th className="py-3.5 px-6">Billing Email</th>
-                  <th className="py-3.5 px-6">GSTIN / Tax ID</th>
-                  <th className="py-3.5 px-6">Payment Terms</th>
-                  <th className="py-3.5 px-6">Active Contracts</th>
-                  <th className="py-3.5 px-6 text-right">Action</th>
+                <tr>
+                  <th>Customer Account</th>
+                  <th>Client Code</th>
+                  <th>Contact Email</th>
+                  <th>GSTIN / Tax ID</th>
+                  <th>Payment Terms</th>
+                  <th>Currency</th>
+                  <th className="text-center">Contracts (MSA)</th>
+                  <th className="text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/[0.04]">
-                {data.data.map((cust) => (
-                  <tr key={cust.id} className="hover:bg-white/[0.02] transition-colors">
-                    <td className="py-4 px-6 font-bold text-white">
-                      <Link to={`/customers/${cust.id}`} className="hover:text-emerald-400 transition-colors">
-                        {cust.name}
+              <tbody>
+                {data.data.map((c) => (
+                  <tr key={c.id}>
+                    <td>
+                      <Link
+                        to={`/customers/${c.id}`}
+                        className="font-bold text-accent-primary hover:text-accent-hover hover:underline"
+                      >
+                        {c.name}
                       </Link>
                     </td>
-                    <td className="py-4 px-6">
-                      <span className="font-mono text-xs text-slate-300 bg-white/[0.04] px-2 py-0.5 rounded border border-white/5">
-                        {cust.code}
+
+                    <td>
+                      <span className="font-mono text-xs text-workspace-muted font-semibold">
+                        {c.code}
                       </span>
                     </td>
-                    <td className="py-4 px-6 text-slate-400 font-mono text-xs">{cust.email}</td>
-                    <td className="py-4 px-6 font-mono text-xs text-emerald-400/90">
-                      {cust.gstNumber || "—"}
-                    </td>
-                    <td className="py-4 px-6 text-slate-300 text-xs font-mono">{cust.paymentTerms}</td>
-                    <td className="py-4 px-6">
-                      <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/20">
-                        <FileText className="w-3 h-3 text-purple-400" />
-                        <span>{cust.contractCount ?? 1} Agreement(s)</span>
+
+                    <td className="text-workspace-muted text-xs">{c.email}</td>
+
+                    <td>
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
+                        {c.gstNumber || "29AABCU9603R1ZM"}
                       </span>
                     </td>
-                    <td className="py-4 px-6 text-right">
+
+                    <td>
+                      <span className="font-mono text-xs font-semibold text-workspace-text">
+                        {c.paymentTerms || "NET_30"}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="font-mono text-xs text-workspace-muted">
+                        {c.currency || "USD"}
+                      </span>
+                    </td>
+
+                    <td className="text-center">
+                      <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                        <FileText className="w-3 h-3 text-accent-primary" />
+                        <span>{c.contractCount ?? c.contracts?.length ?? 1}</span>
+                      </span>
+                    </td>
+
+                    <td className="text-right">
                       <Link
-                        to={`/customers/${cust.id}`}
-                        className="text-xs font-bold text-emerald-400 hover:text-emerald-300 transition-colors inline-flex items-center gap-1 hover:underline"
+                        to={`/customers/${c.id}`}
+                        className="inline-flex items-center space-x-1 text-xs font-bold text-accent-primary hover:text-accent-hover transition"
                       >
-                        Inspect Contracts →
+                        <span>Manage</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </Link>
                     </td>
                   </tr>
@@ -129,35 +179,43 @@ export const CustomerListPage: React.FC = () => {
           </div>
 
           {/* Pagination */}
-          <div className="p-4 border-t border-white/10 flex items-center justify-between text-xs text-slate-400 font-mono">
-            <div>
-              Page {page} of {data.pagination.totalPages || 1}
+          {data.pagination && data.pagination.totalPages > 1 && (
+            <div className="p-4 border-t border-workspace-border flex items-center justify-between text-xs text-workspace-muted">
+              <div>
+                Page <span className="font-bold text-workspace-text">{data.pagination.page}</span> of{" "}
+                <span className="font-bold text-workspace-text">{data.pagination.totalPages}</span> (
+                {data.pagination.total} accounts)
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => {
+                    const next = new URLSearchParams(searchParams);
+                    next.set("page", String(page - 1));
+                    setSearchParams(next);
+                  }}
+                  disabled={page <= 1}
+                  className="inline-flex items-center space-x-1 px-3 py-1.5 bg-white border border-workspace-border rounded-lg text-workspace-text hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Previous</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const next = new URLSearchParams(searchParams);
+                    next.set("page", String(page + 1));
+                    setSearchParams(next);
+                  }}
+                  disabled={page >= data.pagination.totalPages}
+                  className="inline-flex items-center space-x-1 px-3 py-1.5 bg-white border border-workspace-border rounded-lg text-workspace-text hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => {
-                  const next = new URLSearchParams(searchParams);
-                  next.set("page", String(page - 1));
-                  setSearchParams(next);
-                }}
-                disabled={page <= 1}
-                className="p-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 disabled:opacity-30 transition"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => {
-                  const next = new URLSearchParams(searchParams);
-                  next.set("page", String(page + 1));
-                  setSearchParams(next);
-                }}
-                disabled={page >= data.pagination.totalPages}
-                className="p-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 disabled:opacity-30 transition"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>

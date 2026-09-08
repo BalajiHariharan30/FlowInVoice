@@ -5,46 +5,53 @@ import {
   FileText,
   Receipt,
   CheckSquare,
-  Users,
   Building2,
+  BarChart3,
   ShieldCheck,
-  Sparkles
+  Code2,
+  Settings,
+  Zap,
+  LogOut
 } from "lucide-react";
+import { useAuth } from "../../contexts/AuthContext";
 
 export const Sidebar: React.FC = () => {
+  const { user, activeTenant, logout } = useAuth();
+
   const navItems = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/pos", label: "Purchase Orders", icon: FileText },
     { to: "/invoices", label: "Invoices", icon: Receipt },
-    { to: "/reviews", label: "Review Center", icon: CheckSquare },
-    { to: "/customers", label: "Customers & Contracts", icon: Building2 },
-    { to: "/users", label: "Users & Roles", icon: Users },
-    { to: "/audit/system", label: "Audit Ledger", icon: ShieldCheck }
+    { to: "/reviews", label: "Review Center", icon: CheckSquare, badge: "18" },
+    { to: "/customers", label: "Customers", icon: Building2 },
+    { to: "/analytics", label: "Analytics", icon: BarChart3 },
+    { to: "/audit/system", label: "Audit Logs", icon: ShieldCheck },
+    { to: "/developer", label: "Developer", icon: Code2 },
+    { to: "/settings", label: "Settings", icon: Settings }
   ];
 
   return (
-    <aside className="w-64 bg-obsidian-900/80 backdrop-blur-2xl text-slate-300 flex flex-col h-screen fixed left-0 top-0 border-r border-white/[0.06] z-20">
+    <aside className="w-64 bg-dark-primary text-slate-400 flex flex-col h-screen fixed left-0 top-0 border-r border-dark-border z-30 select-none">
       {/* Brand Header */}
-      <div className="p-6 border-b border-white/[0.06] flex items-center space-x-3.5">
-        <div className="relative">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 flex items-center justify-center font-black text-obsidian-950 text-base shadow-neon-emerald">
-            P
-          </div>
-          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 ring-2 ring-obsidian-900 animate-pulse"></div>
+      <div className="p-5 border-b border-dark-border flex items-center space-x-3">
+        <div className="w-8 h-8 rounded-lg bg-accent-primary flex items-center justify-center text-white shadow-subtle flex-shrink-0">
+          <Zap className="w-4 h-4 fill-white" />
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center space-x-1.5">
-            <h1 className="text-white font-bold text-base tracking-tight">P2I Agentic</h1>
-            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-white font-bold text-sm tracking-tight truncate">FlowInvoice AI</span>
           </div>
-          <p className="text-[11px] text-slate-400 font-medium tracking-wide uppercase">
-            Autonomous SaaS
+          <p className="text-[10px] text-workspace-muted font-mono tracking-tight truncate">
+            Enterprise PO → Invoice
           </p>
         </div>
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 px-3 py-6 space-y-1.5 overflow-y-auto">
+      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <div className="px-3 pb-1.5 text-[10px] font-mono uppercase tracking-wider text-workspace-muted font-medium">
+          Platform Operations
+        </div>
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
@@ -52,24 +59,34 @@ export const Sidebar: React.FC = () => {
               key={item.to}
               to={item.to}
               className={({ isActive }) =>
-                `group relative flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                `group flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
                   isActive
-                    ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 shadow-[0_0_20px_-3px_rgba(16,185,129,0.25)]"
-                    : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.04] border border-transparent"
+                    ? "bg-accent-primary text-white"
+                    : "text-slate-400 hover:text-white hover:bg-dark-hover"
                 }`
               }
             >
               {({ isActive }) => (
                 <>
-                  {isActive && (
-                    <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"></span>
+                  <div className="flex items-center space-x-2.5 min-w-0">
+                    <Icon
+                      className={`w-4 h-4 flex-shrink-0 ${
+                        isActive ? "text-white" : "text-slate-400 group-hover:text-slate-200"
+                      }`}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                  {item.badge && (
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+                        isActive
+                          ? "bg-white/20 text-white"
+                          : "bg-semantic-warning/20 text-semantic-warning"
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
                   )}
-                  <Icon
-                    className={`w-4 h-4 transition-transform duration-200 group-hover:scale-110 ${
-                      isActive ? "text-emerald-400" : "text-slate-400 group-hover:text-slate-200"
-                    }`}
-                  />
-                  <span>{item.label}</span>
                 </>
               )}
             </NavLink>
@@ -77,19 +94,25 @@ export const Sidebar: React.FC = () => {
         })}
       </nav>
 
-      {/* Footer System Status */}
-      <div className="p-4 border-t border-white/[0.06] bg-obsidian-950/40">
-        <div className="flex items-center justify-between text-xs">
-          <div className="flex items-center space-x-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-slate-400 font-medium">Agents Online</span>
+      {/* Bottom User & Tenant Profile */}
+      <div className="p-3 border-t border-dark-border bg-dark-secondary/60">
+        <div className="flex items-center justify-between px-2 py-2 rounded-lg bg-dark-elevated border border-dark-border">
+          <div className="flex items-center space-x-2 min-w-0">
+            <div className="w-7 h-7 rounded-md bg-accent-primary/20 text-accent-secondary border border-accent-border/30 flex items-center justify-center font-bold text-xs">
+              {user?.name ? user.name.slice(0, 1).toUpperCase() : "A"}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-white truncate">{user?.name || "Admin"}</div>
+              <div className="text-[10px] text-workspace-muted truncate font-mono">{activeTenant}</div>
+            </div>
           </div>
-          <span className="font-mono text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.06]">
-            v1.0-PROD
-          </span>
+          <button
+            onClick={logout}
+            title="Sign out"
+            className="p-1.5 text-workspace-muted hover:text-rose-400 rounded-md hover:bg-dark-hover transition"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
     </aside>

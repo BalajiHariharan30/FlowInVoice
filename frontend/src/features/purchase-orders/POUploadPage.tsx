@@ -1,7 +1,18 @@
 import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiClient } from "../../lib/axios";
-import { UploadCloud, FileText, CheckCircle2, AlertCircle, X, ArrowLeft, Sparkles } from "lucide-react";
+import {
+  UploadCloud,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+  X,
+  ArrowLeft,
+  ShieldCheck,
+  Lock,
+  Sparkles,
+  RefreshCw
+} from "lucide-react";
 
 export const POUploadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -9,14 +20,18 @@ export const POUploadPage: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "received" | "processing">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleFileSelect = (selectedFile: File) => {
     setErrorMessage(null);
-    const validTypes = ["application/pdf", "image/png", "image/jpeg", "image/tiff"];
-    if (!validTypes.includes(selectedFile.type) && !selectedFile.name.toLowerCase().endsWith(".pdf")) {
-      setErrorMessage("Please upload a PDF document or standard image (PNG, JPEG, TIFF)");
+    const validTypes = ["application/pdf", "image/png", "image/jpeg", "image/jpg"];
+    const isPdf = selectedFile.name.toLowerCase().endsWith(".pdf");
+    const isImage = /\.(png|jpe?g)$/i.test(selectedFile.name);
+
+    if (!validTypes.includes(selectedFile.type) && !isPdf && !isImage) {
+      setErrorMessage("Supported formats: PDF, PNG, JPG");
       return;
     }
 
@@ -41,6 +56,7 @@ export const POUploadPage: React.FC = () => {
 
     setIsUploading(true);
     setUploadProgress(0);
+    setUploadStatus("uploading");
     setErrorMessage(null);
 
     const formData = new FormData();
@@ -61,8 +77,14 @@ export const POUploadPage: React.FC = () => {
       });
 
       if (response.status === 202 || response.status === 200) {
-        const { poId } = response.data;
-        navigate(`/pos/${poId}`);
+        setUploadStatus("received");
+        setTimeout(() => {
+          setUploadStatus("processing");
+          setTimeout(() => {
+            const { poId } = response.data;
+            navigate(`/pos/${poId}`);
+          }, 800);
+        }, 600);
       }
     } catch (err: any) {
       if (err.name === "CanceledError" || err.code === "ERR_CANCELED") {
@@ -70,6 +92,7 @@ export const POUploadPage: React.FC = () => {
       } else {
         setErrorMessage(err.message || "Failed to upload purchase order");
       }
+      setUploadStatus("idle");
     } finally {
       setIsUploading(false);
     }
@@ -81,39 +104,46 @@ export const POUploadPage: React.FC = () => {
     }
     setIsUploading(false);
     setUploadProgress(0);
+    setUploadStatus("idle");
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-5">
       {/* Header */}
       <div className="flex items-center space-x-3">
         <button
           onClick={() => navigate("/pos")}
-          className="p-2 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/[0.05] transition"
+          className="p-1.5 rounded-lg border border-workspace-border hover:bg-workspace-hover text-workspace-muted hover:text-workspace-text transition shadow-subtle"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <div className="flex items-center space-x-2">
-            <h1 className="text-2xl font-bold text-white tracking-tight">Intake Purchase Order</h1>
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-          </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Submit customer PO for automatic OCR extraction, math verification, and contract RAG validation
+          <h1 className="text-xl font-bold text-workspace-text tracking-tight">Upload Purchase Order</h1>
+          <p className="text-xs text-workspace-muted mt-0.5">
+            Ingest customer PO document for automated extraction, deterministic validation, and invoice generation
           </p>
         </div>
       </div>
 
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 flex items-center space-x-3 text-xs">
-          <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
-          <span>{errorMessage}</span>
+        <div className="p-3.5 rounded-xl bg-semantic-error-bg border border-semantic-error-border text-slate-800 flex items-center justify-between text-xs">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-semantic-error flex-shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            onClick={() => handleUpload()}
+            className="flex items-center space-x-1 font-semibold text-semantic-error hover:underline ml-3"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Retry</span>
+          </button>
         </div>
       )}
 
-      {/* Main Glammorphic Card */}
-      <div className="glass-card p-8 space-y-6">
-        {/* Interactive Dropzone */}
+      {/* Main Upload Card */}
+      <div className="workspace-card p-6 space-y-5">
+        {/* Interactive Dropzone (§13) */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -122,18 +152,18 @@ export const POUploadPage: React.FC = () => {
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
           onClick={() => document.getElementById("file-input")?.click()}
-          className={`relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer overflow-hidden ${
+          className={`border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer ${
             isDragging
-              ? "border-emerald-400 bg-emerald-500/10 shadow-neon-emerald"
+              ? "border-accent-primary bg-accent-subtle/50"
               : file
-              ? "border-emerald-500/40 bg-emerald-950/20"
-              : "border-white/10 hover:border-emerald-500/30 bg-slate-950/40 hover:bg-slate-900/40"
+              ? "border-accent-border bg-accent-subtle/30"
+              : "border-workspace-border hover:border-accent-border bg-workspace-subtle hover:bg-white"
           }`}
         >
           <input
             id="file-input"
             type="file"
-            accept=".pdf,image/png,image/jpeg,image/tiff"
+            accept=".pdf,image/png,image/jpeg,image/jpg"
             className="hidden"
             onChange={(e) => {
               if (e.target.files && e.target.files[0]) {
@@ -143,39 +173,45 @@ export const POUploadPage: React.FC = () => {
           />
 
           <div className="flex flex-col items-center justify-center space-y-3">
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-neon-emerald">
-              <UploadCloud className="w-8 h-8" />
+            <div className="w-12 h-12 rounded-xl bg-white border border-workspace-border flex items-center justify-center text-accent-primary shadow-subtle">
+              <UploadCloud className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-200">
-                Click to browse or drop your purchase order here
+              <p className="text-sm font-semibold text-workspace-text">
+                Drop your Purchase Order here
               </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Accepts PDF, Scanned TIFF, PNG, JPEG up to 25 MB
+              <p className="text-xs text-workspace-muted mt-1">
+                or click to browse files from your computer
               </p>
+            </div>
+            <div className="flex items-center space-x-2 text-[11px] text-workspace-muted font-mono pt-1">
+              <span>Supported: PDF, PNG, JPG</span>
+              <span>•</span>
+              <span>Max file size: 25 MB</span>
             </div>
           </div>
         </div>
 
-        {/* Selected File Pill */}
+        {/* Selected File Card */}
         {file && (
-          <div className="p-4 rounded-xl bg-slate-950/50 border border-white/10 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                <FileText className="w-5 h-5" />
+          <div className="p-3.5 rounded-xl bg-workspace-subtle border border-workspace-border flex items-center justify-between">
+            <div className="flex items-center space-x-3 min-w-0">
+              <div className="w-9 h-9 rounded-lg bg-white border border-workspace-border flex items-center justify-center text-accent-primary shadow-subtle flex-shrink-0">
+                <FileText className="w-4 h-4" />
               </div>
-              <div>
-                <div className="text-xs font-bold text-slate-100">{file.name}</div>
-                <div className="text-[11px] text-slate-400">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-workspace-text truncate">{file.name}</div>
+                <div className="text-[11px] text-workspace-muted font-mono">
                   {(file.size / (1024 * 1024)).toFixed(2)} MB • {file.type || "PDF Document"}
                 </div>
               </div>
             </div>
 
-            {!isUploading && (
+            {!isUploading && uploadStatus === "idle" && (
               <button
                 onClick={() => setFile(null)}
-                className="p-1.5 text-slate-400 hover:text-rose-300 rounded-lg hover:bg-rose-500/10 transition"
+                className="p-1.5 text-workspace-muted hover:text-workspace-text rounded-md hover:bg-white transition"
+                title="Remove file"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -183,40 +219,69 @@ export const POUploadPage: React.FC = () => {
           </div>
         )}
 
-        {/* Shimmer Progress Meter */}
-        {isUploading && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span className="flex items-center space-x-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>Uploading to isolated tenant S3 vault...</span>
+        {/* Upload Status / Progress Indicator (§13) */}
+        {(isUploading || uploadStatus !== "idle") && (
+          <div className="space-y-2 p-3.5 bg-workspace-subtle rounded-xl border border-workspace-border">
+            <div className="flex items-center justify-between text-xs">
+              <span className="flex items-center space-x-1.5 font-medium text-workspace-text">
+                {uploadStatus === "uploading" && (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent-primary animate-pulse" />
+                    <span>Uploading document...</span>
+                  </>
+                )}
+                {uploadStatus === "received" && (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 text-semantic-success" />
+                    <span className="text-semantic-success font-semibold">PO received</span>
+                  </>
+                )}
+                {uploadStatus === "processing" && (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 text-accent-primary animate-spin" />
+                    <span className="text-accent-primary font-semibold">AI processing started...</span>
+                  </>
+                )}
               </span>
-              <span className="font-mono font-bold text-emerald-400">{uploadProgress}%</span>
+              <span className="font-mono font-bold text-accent-primary">{uploadProgress}%</span>
             </div>
-            <div className="w-full bg-slate-950/60 h-2.5 rounded-full overflow-hidden border border-white/10">
+
+            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
               <div
-                className="bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 h-full transition-all duration-200 shadow-neon-emerald"
+                className="bg-accent-primary h-full transition-all duration-200"
                 style={{ width: `${uploadProgress}%` }}
-              ></div>
+              />
             </div>
-            <div className="flex justify-end pt-1">
-              <button
-                onClick={handleCancel}
-                className="text-[11px] text-rose-400 hover:underline"
-              >
-                Cancel ingestion
-              </button>
-            </div>
+
+            {uploadStatus === "uploading" && (
+              <div className="flex justify-end pt-1">
+                <button onClick={handleCancel} className="text-[11px] text-workspace-muted hover:text-semantic-error">
+                  Cancel upload
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Buttons */}
-        <div className="pt-2 flex justify-end space-x-3 border-t border-white/[0.06]">
+        {/* Security Trust Indicator (§42) */}
+        <div className="p-3 rounded-lg bg-white border border-workspace-border flex items-center justify-between text-[11px] text-workspace-muted font-mono">
+          <div className="flex items-center space-x-2">
+            <ShieldCheck className="w-3.5 h-3.5 text-semantic-success" />
+            <span>256-bit TLS encryption</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Lock className="w-3 h-3 text-slate-400" />
+            <span>Isolated tenant storage</span>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="pt-2 flex justify-end space-x-2.5 border-t border-workspace-border">
           <button
             type="button"
             onClick={() => navigate("/pos")}
             disabled={isUploading}
-            className="px-4 py-2.5 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 hover:bg-white/[0.04] transition disabled:opacity-40"
+            className="px-4 py-2 border border-workspace-border rounded-lg text-xs font-semibold text-workspace-muted hover:bg-workspace-hover hover:text-workspace-text transition disabled:opacity-40"
           >
             Cancel
           </button>
@@ -224,10 +289,10 @@ export const POUploadPage: React.FC = () => {
             type="button"
             onClick={handleUpload}
             disabled={!file || isUploading}
-            className="flex items-center space-x-2 px-6 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-400 hover:from-emerald-500 hover:to-teal-300 text-obsidian-950 rounded-xl text-xs font-bold transition-all duration-200 disabled:opacity-40 shadow-neon-emerald"
+            className="flex items-center space-x-1.5 px-5 py-2 bg-accent-primary hover:bg-accent-hover text-white rounded-lg text-xs font-semibold shadow-subtle transition disabled:opacity-40"
           >
             <UploadCloud className="w-4 h-4" />
-            <span>{isUploading ? "Ingesting Document..." : "Launch Autonomous Pipeline"}</span>
+            <span>{isUploading ? "Uploading..." : "Start Processing"}</span>
           </button>
         </div>
       </div>

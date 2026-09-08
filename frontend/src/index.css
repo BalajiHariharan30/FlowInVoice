@@ -4,61 +4,67 @@
 
 @layer base {
   :root {
-    font-family: 'Plus Jakarta Sans', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    color-scheme: dark;
+    font-family: 'Inter', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 
   body {
-    @apply bg-obsidian-950 text-slate-100 min-h-screen antialiased selection:bg-emerald-500/30 selection:text-emerald-200;
-    background-image: 
-      radial-gradient(at 10% 10%, rgba(16, 185, 129, 0.08) 0px, transparent 50%),
-      radial-gradient(at 90% 20%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
-      radial-gradient(at 50% 80%, rgba(168, 85, 247, 0.05) 0px, transparent 50%);
-    background-attachment: fixed;
+    @apply bg-dark-primary text-workspace-text antialiased selection:bg-accent-primary/20 selection:text-accent-primary;
   }
 }
 
 @layer components {
-  /* Ultra-modern Glammorphic Glass Card */
-  .glass-card {
-    @apply bg-slate-900/40 backdrop-blur-xl border border-white/[0.08] shadow-glass rounded-2xl transition-all duration-300;
+  /* Dark Infrastructure Panel */
+  .dark-panel {
+    @apply bg-dark-secondary border border-dark-border rounded-xl;
   }
 
-  .glass-card-hover {
-    @apply glass-card hover:bg-slate-900/60 hover:border-white/[0.15] hover:shadow-glass-lg hover:-translate-y-0.5;
+  /* Dark Elevated Card */
+  .dark-card {
+    @apply bg-dark-elevated border border-dark-border rounded-xl;
   }
 
-  .glass-panel {
-    @apply bg-obsidian-900/70 backdrop-blur-2xl border border-white/[0.07] shadow-glass;
+  /* Light Workspace Surface */
+  .workspace-panel {
+    @apply bg-workspace-bg text-workspace-text;
   }
 
-  /* Sleek Glammorphic Input */
-  .glass-input {
-    @apply bg-slate-950/50 border border-white/10 rounded-xl text-slate-100 placeholder-slate-500 
-           transition-all duration-200 focus:outline-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/20 focus:bg-slate-900/70;
+  .workspace-card {
+    @apply bg-workspace-card border border-workspace-border rounded-xl shadow-card;
   }
 
-  /* Specular Light Reflection */
-  .specular-highlight {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 100%);
+  /* Standard Enterprise Table */
+  .enterprise-table {
+    @apply w-full text-left text-xs border-collapse;
+  }
+
+  .enterprise-table th {
+    @apply py-3 px-4 bg-workspace-subtle border-b border-workspace-border text-workspace-muted font-medium uppercase tracking-wider text-[11px];
+  }
+
+  .enterprise-table td {
+    @apply py-3 px-4 border-b border-workspace-border text-workspace-text;
+  }
+
+  .enterprise-table tr:hover td {
+    @apply bg-workspace-hover/60;
   }
 }
 
-/* Custom Ultra-Thin Dark Scrollbar */
+/* Crisp Dark Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(10, 15, 29, 0.5);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(100, 116, 139, 0.25);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(100, 116, 139, 0.45);
 }

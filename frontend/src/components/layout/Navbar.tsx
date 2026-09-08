@@ -1,50 +1,123 @@
-import React from "react";
+import React, { useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
-import { LogOut, Building, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Search,
+  Building2,
+  Bell,
+  ChevronDown,
+  Sparkles,
+  HelpCircle,
+  ShieldCheck
+} from "lucide-react";
 
-export const Navbar: React.FC = () => {
-  const { user, logout } = useAuth();
+interface NavbarProps {
+  onOpenCommandPalette?: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({ onOpenCommandPalette }) => {
+  const { user, activeTenant, setTenant } = useAuth();
+  const location = useLocation();
+  const [showTenantDropdown, setShowTenantDropdown] = useState(false);
+
+  // Generate breadcrumb from pathname
+  const pathSegments = location.pathname.split("/").filter(Boolean);
+  const currentSection = pathSegments[0]
+    ? pathSegments[0].toUpperCase().replace(/-/g, " ")
+    : "DASHBOARD";
+
+  const tenants = ["Acme Corporation", "Globex Industries", "Stark Enterprises", "Wayne Holdings"];
 
   return (
-    <header className="h-16 bg-obsidian-950/60 backdrop-blur-2xl border-b border-white/[0.06] flex items-center justify-between px-8 sticky top-0 z-10 transition-all">
-      {/* Tenant Pill */}
-      <div className="flex items-center space-x-3">
-        <div className="flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-xs font-medium text-slate-300 shadow-glass-sm">
-          <Building className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="text-slate-400">Workspace:</span>
-          <strong className="text-slate-100 font-mono tracking-tight">
-            {user?.tenantId || "tenant_default"}
-          </strong>
-        </div>
+    <header className="h-14 bg-dark-primary border-b border-dark-border flex items-center justify-between px-6 sticky top-0 z-20">
+      {/* Left: Breadcrumbs */}
+      <div className="flex items-center space-x-2 text-xs">
+        <span className="text-workspace-muted font-mono">FLOWINVOICE</span>
+        <span className="text-dark-border">/</span>
+        <span className="text-white font-medium tracking-wide">{currentSection}</span>
       </div>
 
-      {/* User Status & Actions */}
-      <div className="flex items-center space-x-5">
-        <div className="flex items-center space-x-3 text-right">
-          <div>
-            <div className="text-xs font-semibold text-slate-100 flex items-center space-x-1.5">
-              <span>{user?.name || "Administrator"}</span>
-            </div>
-            <div className="flex items-center justify-end space-x-1 mt-0.5">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" />
-              <span className="text-[10px] font-mono text-emerald-400/90 tracking-wider uppercase">
-                {user?.role || "VIEWER"}
-              </span>
-            </div>
+      {/* Center: Command Palette Trigger (§6 & §28) */}
+      <div className="flex-1 max-w-md mx-6">
+        <button
+          onClick={onOpenCommandPalette}
+          className="w-full flex items-center justify-between px-3 py-1.5 bg-dark-secondary hover:bg-dark-hover border border-dark-border rounded-lg text-xs text-workspace-muted hover:text-slate-300 transition group"
+        >
+          <div className="flex items-center space-x-2">
+            <Search className="w-3.5 h-3.5 text-workspace-muted group-hover:text-white transition-colors" />
+            <span>Search anything...</span>
           </div>
+          <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-dark-elevated text-slate-400 border border-dark-border rounded">
+            ⌘ K
+          </kbd>
+        </button>
+      </div>
 
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 border border-white/10 flex items-center justify-center text-slate-200 font-bold text-xs shadow-glass-sm">
-            {user?.name ? user.name.slice(0, 2).toUpperCase() : "AD"}
-          </div>
+      {/* Right: AI Status, Tenant, Notifications, User */}
+      <div className="flex items-center space-x-4">
+        {/* AI System Status (§6) */}
+        <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-dark-secondary border border-dark-border text-[11px] font-mono text-slate-300">
+          <span className="w-2 h-2 rounded-full bg-semantic-success animate-pulse"></span>
+          <span>AI Systems Operational</span>
         </div>
 
+        {/* Multi-Tenancy Selector Dropdown (§26) */}
+        <div className="relative">
+          <button
+            onClick={() => setShowTenantDropdown(!showTenantDropdown)}
+            className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-dark-secondary hover:bg-dark-hover border border-dark-border text-xs text-slate-200 transition"
+          >
+            <Building2 className="w-3.5 h-3.5 text-accent-secondary" />
+            <span className="font-medium max-w-[120px] truncate">{activeTenant}</span>
+            <ChevronDown className="w-3 h-3 text-workspace-muted" />
+          </button>
+
+          {showTenantDropdown && (
+            <div className="absolute right-0 mt-1.5 w-48 bg-dark-secondary border border-dark-border rounded-xl shadow-dark-elevated py-1 z-50 text-xs">
+              <div className="px-3 py-1 text-[10px] uppercase font-mono text-workspace-muted">
+                Switch Organization
+              </div>
+              {tenants.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => {
+                    setTenant(t);
+                    setShowTenantDropdown(false);
+                  }}
+                  className={`w-full text-left px-3 py-1.5 hover:bg-dark-hover transition flex items-center justify-between ${
+                    t === activeTenant ? "text-accent-secondary font-medium" : "text-slate-300"
+                  }`}
+                >
+                  <span className="truncate">{t}</span>
+                  {t === activeTenant && <span className="w-1.5 h-1.5 rounded-full bg-accent-primary" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Notifications Icon */}
         <button
-          onClick={logout}
-          title="Sign Out"
-          className="p-2 text-slate-400 hover:text-rose-300 rounded-xl hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition-all duration-200"
+          onClick={onOpenCommandPalette}
+          className="relative p-1.5 text-workspace-muted hover:text-white rounded-lg hover:bg-dark-hover transition"
+          title="Notifications & Exceptions"
         >
-          <LogOut className="w-4 h-4" />
+          <Bell className="w-4 h-4" />
+          <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-semantic-warning"></span>
         </button>
+
+        {/* User Role Badge */}
+        <div className="flex items-center space-x-2 pl-1 border-l border-dark-border">
+          <div className="text-right hidden md:block">
+            <div className="text-xs font-medium text-white">{user?.name || "Admin"}</div>
+            <div className="text-[10px] font-mono text-accent-secondary uppercase">
+              {user?.role || "ADMIN"}
+            </div>
+          </div>
+          <div className="w-7 h-7 rounded-md bg-accent-primary text-white flex items-center justify-center font-bold text-xs">
+            {user?.name ? user.name.slice(0, 1).toUpperCase() : "A"}
+          </div>
+        </div>
       </div>
     </header>
   );

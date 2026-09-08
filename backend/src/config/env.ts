@@ -16,7 +16,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional().default("mock-google-client-id"),
   GOOGLE_CLIENT_SECRET: z.string().optional().default("mock-google-client-secret"),
 
-  MONGODB_URI: z.string().default("mongodb://localhost:27017/p2i_saas"),
+  MONGODB_URI: z.string().default("mongodb://127.0.0.1:27017/p2i_saas"),
 
   REDIS_HOST: z.string().default("localhost"),
   REDIS_PORT: z.coerce.number().default(6379),

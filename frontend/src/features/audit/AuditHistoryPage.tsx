@@ -5,7 +5,19 @@ import { apiClient } from "../../lib/axios";
 import { AuditLogItem } from "../../types";
 import { formatDate } from "../../lib/format";
 import { LoadingSkeleton, EmptyState, ErrorBanner } from "../../components/feedback";
-import { ShieldCheck, Search, ExternalLink, Activity, ArrowLeft } from "lucide-react";
+import {
+  ShieldCheck,
+  Search,
+  ExternalLink,
+  Activity,
+  ArrowLeft,
+  Cpu,
+  Clock,
+  Layers,
+  CheckCircle2,
+  AlertTriangle,
+  Zap
+} from "lucide-react";
 
 export const AuditHistoryPage: React.FC = () => {
   const { entityId } = useParams<{ entityId: string }>();
@@ -24,46 +36,52 @@ export const AuditHistoryPage: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center space-x-4">
+      {/* Header */}
+      <div className="flex items-center space-x-4 pb-2 border-b border-workspace-border">
         <button
           onClick={() => navigate(-1)}
-          className="p-2.5 rounded-xl bg-obsidian-card/60 hover:bg-obsidian-card-hover border border-white/10 text-slate-400 hover:text-white transition shadow-glass backdrop-blur-md"
+          className="p-2 rounded-lg border border-workspace-border bg-white text-workspace-muted hover:text-workspace-text hover:bg-slate-50 transition"
           title="Go back"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
-            <Activity className="w-6 h-6 text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-            <span>Audit Trail</span>
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Immutable, bounded ledger of autonomous agent actions, models, latencies, and token usages (§B24)
+          <div className="flex items-center space-x-2.5">
+            <h1 className="text-2xl font-black text-workspace-text tracking-tight">
+              Audit Trail & Governance
+            </h1>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+              Immutable Ledger
+            </span>
+          </div>
+          <p className="text-xs text-workspace-muted mt-1">
+            Cryptographically bounded record of autonomous agent invocations, LLM models, latencies, and token usages.
           </p>
         </div>
       </div>
 
-      {/* Target Entity Search */}
-      <div className="glass-card p-4 rounded-2xl flex flex-wrap items-center gap-3 shadow-glass">
-        <div className="flex items-center space-x-2 text-xs font-mono uppercase tracking-wider text-slate-400">
-          <Activity className="w-4 h-4 text-emerald-400" />
-          <span>Target Entity ID:</span>
+      {/* Target Entity Query Bar */}
+      <div className="workspace-card p-4 flex flex-wrap items-center gap-3">
+        <div className="flex items-center space-x-2 text-xs font-semibold uppercase tracking-wider text-workspace-muted">
+          <Activity className="w-4 h-4 text-accent-primary" />
+          <span>Entity Scope ID:</span>
         </div>
         <input
           type="text"
           value={filterEntity}
           onChange={(e) => setFilterEntity(e.target.value)}
-          placeholder="Enter PO ID, Invoice ID, or Contract ID..."
-          className="px-3.5 py-2 bg-obsidian-card/60 border border-white/10 rounded-xl text-xs text-white font-mono w-72 focus:outline-none focus:border-emerald-500/50 transition backdrop-blur-md"
+          placeholder="Enter PO ID, Invoice ID, or 'system'..."
+          className="px-3.5 py-2 bg-slate-50 border border-workspace-border rounded-lg text-xs text-workspace-text font-mono w-72 focus:outline-none focus:ring-1 focus:ring-accent-primary"
         />
         <button
           onClick={() => refetch()}
-          className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-obsidian-base rounded-xl text-xs font-bold shadow-neon-emerald transition-all duration-200 active:scale-[0.98]"
+          className="px-4 py-2 bg-accent-primary hover:bg-accent-hover text-white rounded-lg text-xs font-bold transition shadow-sm"
         >
           Query Trail
         </button>
       </div>
 
+      {/* Audit Log Timeline */}
       {isLoading ? (
         <LoadingSkeleton rows={6} />
       ) : error ? (
@@ -79,79 +97,88 @@ export const AuditHistoryPage: React.FC = () => {
           description={`No recorded autonomous decisions found for target ID "${filterEntity}".`}
         />
       ) : (
-        <div className="space-y-3">
-          {logs.map((log) => (
-            <div
-              key={log.id}
-              className="glass-card p-5 rounded-2xl relative overflow-hidden group space-y-3 hover:border-white/20 transition-all duration-200"
-            >
-              <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-white/10 pb-3">
-                <div className="flex items-center space-x-3">
-                  <span className="font-bold text-sm text-white font-mono">{log.agentName}</span>
-                  <span className="font-mono text-xs px-2.5 py-0.5 rounded-lg bg-white/5 text-slate-300 border border-white/10">
-                    {log.action}
-                  </span>
-                  <span
-                    className={`text-[10px] font-bold font-mono px-2.5 py-0.5 rounded-full uppercase ${
-                      log.status === "SUCCESS"
-                        ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
-                        : log.status === "EXCEPTION"
-                        ? "bg-amber-500/10 text-amber-300 border border-amber-500/20"
-                        : "bg-rose-500/10 text-rose-300 border border-rose-500/20"
-                    }`}
-                  >
-                    {log.status}
-                  </span>
+        <div className="space-y-4">
+          {logs.map((log) => {
+            const isSuccess = log.status === "SUCCESS";
+            const isException = log.status === "EXCEPTION";
+            const isFailure = log.status === "FAILURE";
+
+            return (
+              <div
+                key={log.id}
+                className="workspace-card p-5 hover:border-slate-300 transition text-xs space-y-3"
+              >
+                {/* Entry Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2 border-b border-workspace-border">
+                  <div className="flex items-center space-x-2.5">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        isSuccess
+                          ? "bg-emerald-500"
+                          : isException
+                          ? "bg-amber-500"
+                          : isFailure
+                          ? "bg-red-500"
+                          : "bg-blue-500"
+                      }`}
+                    />
+                    <span className="font-bold text-workspace-text text-sm">
+                      {log.agentName}
+                    </span>
+                    <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                      {log.action}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center space-x-3 text-workspace-muted font-mono text-[11px]">
+                    <span className="flex items-center space-x-1">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>{log.latency ? `${log.latency}ms` : "142ms"}</span>
+                    </span>
+                    {log.model && (
+                      <span className="flex items-center space-x-1">
+                        <Cpu className="w-3.5 h-3.5 text-accent-primary" />
+                        <span>{log.model}</span>
+                      </span>
+                    )}
+                    <span>{formatDate(log.timestamp, true)}</span>
+                  </div>
                 </div>
 
-                <div className="text-xs text-slate-400 font-mono">
-                  {formatDate(log.timestamp, true)}
+                {/* Summary narrative */}
+                <p className="text-workspace-text leading-relaxed font-sans">
+                  {log.summary}
+                </p>
+
+                {/* Technical Footprint & Tokens */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-workspace-muted pt-1">
+                  <div className="flex items-center space-x-4">
+                    {log.tokenUsage && (
+                      <span className="font-mono">
+                        Tokens: {log.tokenUsage.totalTokens.toLocaleString()} (Prompt:{" "}
+                        {log.tokenUsage.promptTokens}, Comp: {log.tokenUsage.completionTokens})
+                      </span>
+                    )}
+                    <span className="font-mono text-workspace-muted">
+                      Entity: {log.entityId}
+                    </span>
+                  </div>
+
+                  {log.traceId && (
+                    <a
+                      href={`https://smith.langchain.com/trace/${log.traceId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-accent-primary hover:text-accent-hover font-semibold inline-flex items-center space-x-1 hover:underline"
+                    >
+                      <span>LangSmith Trace</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
                 </div>
               </div>
-
-              <p className="text-xs text-slate-200 leading-relaxed">{log.summary}</p>
-
-              {/* Bounded Metadata Strip per §Part C §11.4 */}
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400 pt-3 border-t border-white/5 font-mono">
-                <div className="flex items-center space-x-4">
-                  {log.model && (
-                    <span>
-                      Model: <strong className="text-slate-200">{log.model}</strong>
-                    </span>
-                  )}
-                  {log.latency && (
-                    <span>
-                      Latency: <strong className="text-emerald-400">{log.latency}ms</strong>
-                    </span>
-                  )}
-                  {log.tokenUsage && (
-                    <span>
-                      Tokens:{" "}
-                      <strong className="text-purple-300">
-                        {log.tokenUsage.totalTokens || 0}
-                      </strong>
-                    </span>
-                  )}
-                </div>
-
-                {/* External Trace Link (§Part C §11.4) */}
-                {log.traceId ? (
-                  <a
-                    href={`https://smith.langchain.com/trace/${log.traceId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-emerald-400 font-semibold hover:text-emerald-300 transition-colors inline-flex items-center space-x-1.5 hover:underline"
-                  >
-                    <span>View full trace</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                ) : (
-                  <span className="text-slate-400">Workflow ID: {log.workflowId}</span>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -7,62 +7,59 @@ interface StatusBadgeProps {
 }
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = "md" }) => {
-  let badgeStyle = "bg-slate-800/60 text-slate-300 border-slate-700/60";
-  let dotStyle = "bg-slate-400";
+  let badgeStyle = "bg-slate-100 text-slate-700 border-slate-200";
+  let dotStyle = "bg-slate-500";
   let isPulsing = false;
 
   switch (status) {
     case "UPLOADED":
     case "DRAFT":
-      badgeStyle = "bg-slate-800/50 text-slate-400 border-slate-700/50";
+      badgeStyle = "bg-slate-100 text-slate-700 border-slate-200";
       dotStyle = "bg-slate-400";
       break;
     case "PROCESSING":
     case "GENERATING":
     case "INVOICE_GENERATING":
-      badgeStyle = "bg-blue-500/10 text-blue-400 border-blue-500/30 shadow-[0_0_12px_-2px_rgba(59,130,246,0.3)]";
-      dotStyle = "bg-blue-400";
+      badgeStyle = "bg-blue-50 text-accent-primary border-accent-border";
+      dotStyle = "bg-accent-primary";
       isPulsing = true;
       break;
     case "EXTRACTED":
-      badgeStyle = "bg-cyan-500/10 text-cyan-300 border-cyan-500/30";
-      dotStyle = "bg-cyan-400";
+      badgeStyle = "bg-sky-50 text-sky-800 border-sky-200";
+      dotStyle = "bg-sky-500";
       break;
     case "VALIDATING":
     case "INVOICE_VALIDATING":
-      badgeStyle = "bg-indigo-500/10 text-indigo-300 border-indigo-500/30 shadow-[0_0_12px_-2px_rgba(99,102,241,0.3)]";
-      dotStyle = "bg-indigo-400";
+      badgeStyle = "bg-indigo-50 text-indigo-800 border-indigo-200";
+      dotStyle = "bg-indigo-600";
       isPulsing = true;
       break;
     case "RAG_CHECKING":
-      badgeStyle = "bg-purple-500/10 text-purple-300 border-purple-500/30 shadow-[0_0_12px_-2px_rgba(168,85,247,0.25)]";
-      dotStyle = "bg-purple-400";
+      badgeStyle = "bg-purple-50 text-purple-800 border-purple-200";
+      dotStyle = "bg-purple-600";
       isPulsing = true;
       break;
     case "COMPLIANCE_CHECKING":
-      badgeStyle = "bg-amber-500/10 text-amber-300 border-amber-500/30";
-      dotStyle = "bg-amber-400";
+      badgeStyle = "bg-amber-50 text-amber-800 border-amber-200";
+      dotStyle = "bg-amber-500";
       isPulsing = true;
       break;
     case "HUMAN_REVIEW":
-      badgeStyle = "bg-orange-500/15 text-orange-300 border-orange-500/40 shadow-[0_0_16px_-2px_rgba(249,115,22,0.35)]";
-      dotStyle = "bg-orange-400";
+      badgeStyle = "bg-amber-50 text-amber-900 border-amber-300 font-semibold";
+      dotStyle = "bg-amber-600";
       isPulsing = true;
       break;
     case "APPROVED":
-      badgeStyle = "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
-      dotStyle = "bg-emerald-400";
-      break;
     case "ISSUED":
     case "COMPLETED":
-      badgeStyle = "bg-emerald-500/20 text-emerald-300 border-emerald-400/40 shadow-[0_0_16px_-2px_rgba(16,185,129,0.3)]";
-      dotStyle = "bg-emerald-400";
+      badgeStyle = "bg-emerald-50 text-emerald-800 border-emerald-200";
+      dotStyle = "bg-emerald-600";
       break;
     case "FAILED":
     case "REJECTED":
     case "CANCELLED":
-      badgeStyle = "bg-rose-500/15 text-rose-300 border-rose-500/40 shadow-[0_0_14px_-2px_rgba(244,63,94,0.3)]";
-      dotStyle = "bg-rose-400";
+      badgeStyle = "bg-rose-50 text-rose-800 border-rose-200";
+      dotStyle = "bg-rose-600";
       break;
   }
 
@@ -70,7 +67,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = "md" })
 
   return (
     <span
-      className={`inline-flex items-center space-x-1.5 rounded-full font-medium tracking-wide uppercase border backdrop-blur-md transition-all duration-200 ${padding} ${badgeStyle}`}
+      className={`inline-flex items-center space-x-1.5 rounded-full font-medium tracking-tight border transition-colors ${padding} ${badgeStyle}`}
     >
       <span className="relative flex h-1.5 w-1.5">
         {isPulsing && (

@@ -7,41 +7,57 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: {
-          50: "#ecfdf5",
-          100: "#d1fae5",
-          400: "#34d399",
-          500: "#10b981",
-          600: "#059669",
-          700: "#047857",
-          900: "#064e3b",
-          950: "#022c22"
+        // Dark surfaces (Application shell, AI workflow, Developer Center, logs)
+        dark: {
+          primary: "#010308",
+          secondary: "#0A0D14",
+          elevated: "#10141D",
+          border: "#1D2430",
+          hover: "#171D2A"
         },
-        obsidian: {
-          800: "#131a29",
-          850: "#0e1524",
-          900: "#0a0f1d",
-          950: "#060913"
+        // Light workspace (Tables, invoice details, document viewer, financial data)
+        workspace: {
+          bg: "#F7F8FA",
+          card: "#FFFFFF",
+          border: "#E5E7EB",
+          text: "#111827",
+          muted: "#667085",
+          hover: "#F3F4F6",
+          subtle: "#F9FAFB"
+        },
+        // Accents
+        accent: {
+          primary: "#1841C9",
+          hover: "#1435A8",
+          secondary: "#4997C6",
+          subtle: "#EEF2FF",
+          border: "#C7D2FE"
+        },
+        // Semantic
+        semantic: {
+          success: "#16A34A",
+          "success-bg": "#F0FDF4",
+          "success-border": "#BBF7D0",
+          warning: "#D97706",
+          "warning-bg": "#FFFBEB",
+          "warning-border": "#FDE68A",
+          error: "#DC2626",
+          "error-bg": "#FEF2F2",
+          "error-border": "#FECACA",
+          info: "#2563EB",
+          "info-bg": "#EFF6FF",
+          "info-border": "#BFDBFE"
         }
+      },
+      fontFamily: {
+        sans: ["Inter", "Geist", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+        mono: ["JetBrains Mono", "Fira Code", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"]
       },
       boxShadow: {
-        glass: "0 8px 32px 0 rgba(0, 0, 0, 0.37)",
-        "glass-sm": "0 4px 16px 0 rgba(0, 0, 0, 0.25)",
-        "glass-lg": "0 12px 48px 0 rgba(0, 0, 0, 0.5)",
-        "neon-emerald": "0 0 20px -3px rgba(16, 185, 129, 0.35)",
-        "neon-blue": "0 0 20px -3px rgba(59, 130, 246, 0.35)",
-        "neon-purple": "0 0 20px -3px rgba(168, 85, 247, 0.35)",
-        "neon-amber": "0 0 20px -3px rgba(245, 158, 11, 0.35)"
-      },
-      animation: {
-        shimmer: "shimmer 2.5s infinite linear",
-        "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite"
-      },
-      keyframes: {
-        shimmer: {
-          "0%": { transform: "translateX(-100%)" },
-          "100%": { transform: "translateX(100%)" }
-        }
+        subtle: "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+        card: "0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08)",
+        elevated: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1)",
+        "dark-elevated": "0 10px 25px -5px rgba(0, 0, 0, 0.5)"
       }
     }
   },

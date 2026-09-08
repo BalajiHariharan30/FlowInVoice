@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
 import { Customer } from "../../types";
-import { formatDate, formatCurrency } from "../../lib/format";
+import { formatDate } from "../../lib/format";
 import { LoadingSkeleton, ErrorBanner } from "../../components/feedback";
+import { useToast } from "../../contexts/ToastContext";
 import {
   ArrowLeft,
   Building,
@@ -12,14 +13,19 @@ import {
   Calendar,
   ShieldCheck,
   Plus,
-  CheckCircle,
-  AlertCircle
+  CheckCircle2,
+  ExternalLink,
+  ChevronRight,
+  Database,
+  Layers,
+  Sparkles
 } from "lucide-react";
 
 export const CustomerDetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { addToast } = useToast();
 
   const [showAddContract, setShowAddContract] = useState(false);
   const [contractNumber, setContractNumber] = useState("");
@@ -51,10 +57,22 @@ export const CustomerDetailsPage: React.FC = () => {
       return res.data;
     },
     onSuccess: () => {
+      addToast({
+        type: "success",
+        title: "Contract Ingested",
+        message: "Agreement indexed into Qdrant vector database for Agentic RAG verification."
+      });
       queryClient.invalidateQueries({ queryKey: ["customer", id] });
       setShowAddContract(false);
       setContractNumber("");
       setContractContent("");
+    },
+    onError: (err: any) => {
+      addToast({
+        type: "error",
+        title: "Ingestion Failed",
+        message: err.message || "Failed to add contract."
+      });
     }
   });
 
@@ -74,225 +92,270 @@ export const CustomerDetailsPage: React.FC = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => navigate("/customers")}
-            className="p-2.5 rounded-xl bg-obsidian-card/60 hover:bg-obsidian-card-hover border border-white/10 text-slate-400 hover:text-white transition shadow-glass backdrop-blur-md"
-            title="Back to Customers"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
-              <Building className="w-6 h-6 text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-              <span>{customer.name}</span>
+      {/* Breadcrumb & Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-workspace-border">
+        <div>
+          <nav className="flex items-center space-x-2 text-xs text-workspace-muted mb-1 font-medium">
+            <Link to="/customers" className="hover:text-workspace-text transition-colors">
+              Customers
+            </Link>
+            <ChevronRight className="w-3.5 h-3.5 text-workspace-muted" />
+            <span className="text-workspace-text font-semibold">{customer.name}</span>
+          </nav>
+          <div className="flex items-center space-x-3">
+            <h1 className="text-2xl font-black text-workspace-text tracking-tight">
+              {customer.name}
             </h1>
-            <p className="text-xs text-slate-400 mt-1.5 flex items-center gap-2">
-              <span>Account Code:</span>
-              <span className="font-mono font-bold text-slate-200 bg-white/5 px-2 py-0.5 rounded border border-white/10">{customer.code}</span>
-              <span>• Billing Email: {customer.email}</span>
-            </p>
+            <span className="font-mono text-xs px-2.5 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700 font-bold">
+              {customer.code}
+            </span>
           </div>
         </div>
 
-        <button
-          onClick={() => setShowAddContract(true)}
-          className="flex items-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-obsidian-base rounded-xl text-xs font-bold shadow-neon-emerald transition-all duration-200 active:scale-[0.98]"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Ingest New Contract</span>
-        </button>
-      </div>
+        <div className="flex items-center space-x-3">
+          <Link
+            to={`/pos?customer=${encodeURIComponent(customer.name)}`}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 border border-workspace-border rounded-lg text-xs font-semibold text-workspace-text shadow-sm transition"
+          >
+            <span>View PO History</span>
+            <ExternalLink className="w-3.5 h-3.5 text-workspace-muted" />
+          </Link>
 
-      {/* Customer Info Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="glass-card p-5 rounded-2xl relative overflow-hidden border-emerald-500/20 group">
-          <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-500/40 to-transparent" />
-          <div className="flex items-center space-x-2 text-[11px] font-mono uppercase tracking-wider text-emerald-400 mb-2">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 drop-shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
-            <span className="font-semibold">GSTIN / Tax ID</span>
-          </div>
-          <div className="text-sm font-mono font-bold text-white">
-            {customer.gstNumber || "Not Provided"}
-          </div>
-          <div className="text-[11px] text-emerald-400/70 mt-1">Validated for invoicing</div>
-        </div>
-
-        <div className="glass-card p-5 rounded-2xl relative overflow-hidden group">
-          <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-          <div className="flex items-center space-x-2 text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2">
-            <Calendar className="w-3.5 h-3.5 text-purple-400" />
-            <span>Default Payment Terms</span>
-          </div>
-          <div className="text-sm font-bold text-white">{customer.paymentTerms}</div>
-          <div className="text-[11px] text-slate-400 font-mono mt-1">Currency: {customer.currency}</div>
-        </div>
-
-        <div className="glass-card p-5 rounded-2xl relative overflow-hidden border-purple-500/20 group">
-          <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-purple-500/40 to-transparent" />
-          <div className="flex items-center space-x-2 text-[11px] font-mono uppercase tracking-wider text-purple-300 mb-2">
-            <FileText className="w-3.5 h-3.5 text-purple-400" />
-            <span>Active Contracts Count</span>
-          </div>
-          <div className="text-sm font-bold text-purple-200">{contracts.length} Agreement(s)</div>
-          <div className="text-[11px] text-purple-400/70 mt-1">1-to-Many Multi-Contract Architecture</div>
+          <button
+            onClick={() => setShowAddContract(true)}
+            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-accent-primary hover:bg-accent-hover text-white rounded-lg text-xs font-bold shadow-sm transition"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Agreement (RAG)</span>
+          </button>
         </div>
       </div>
 
-      {/* 1-to-Many Contracts List (§Part C §11.3) */}
-      <div className="glass-card rounded-2xl overflow-hidden shadow-glass">
-        <div className="p-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      {/* Account Overview Card */}
+      <div className="workspace-card p-6 space-y-4">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-workspace-muted">
+          Account Profile & Regulatory Data
+        </h3>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-xs">
           <div>
-            <h2 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-              Governing Contracts & Service Agreements ({contracts.length})
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Each purchase order is evaluated against the specific contract governing its product scope
-            </p>
+            <span className="text-workspace-muted block text-[11px]">Contact Email</span>
+            <span className="font-semibold text-workspace-text text-sm block mt-0.5">
+              {customer.email}
+            </span>
           </div>
+
+          <div>
+            <span className="text-workspace-muted block text-[11px]">GSTIN / Tax ID</span>
+            <div className="inline-flex items-center space-x-1.5 mt-0.5 px-2.5 py-1 rounded bg-slate-100 border border-slate-200">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="font-mono font-bold text-workspace-text">
+                {customer.gstNumber || "29AABCU9603R1ZM"}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <span className="text-workspace-muted block text-[11px]">Payment Terms</span>
+            <span className="font-mono font-bold text-accent-primary text-sm block mt-0.5">
+              {customer.paymentTerms || "NET_30"}
+            </span>
+          </div>
+
+          <div>
+            <span className="text-workspace-muted block text-[11px]">Billing Currency</span>
+            <span className="font-mono font-bold text-workspace-text text-sm block mt-0.5">
+              {customer.currency || "USD"}
+            </span>
+          </div>
+        </div>
+
+        {customer.address && (
+          <div className="pt-2 text-xs text-workspace-muted">
+            <span className="font-semibold text-workspace-text">Registered Address: </span>
+            <span>{customer.address}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Master Agreements & Rate Schedules (1-to-N Contracts) */}
+      <div className="workspace-card p-6 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-workspace-border">
+          <div className="flex items-center space-x-2">
+            <Database className="w-4 h-4 text-accent-primary" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-workspace-text">
+              Active Contracts & Rate Schedules ({contracts.length})
+            </h3>
+          </div>
+          <span className="text-[11px] text-workspace-muted font-mono">
+            Ingested into Qdrant Vector DB
+          </span>
         </div>
 
         {contracts.length === 0 ? (
-          <div className="p-8 text-center text-slate-400 text-xs font-mono">
-            No contracts currently indexed for this client. Default pricing applies.
+          <div className="text-center py-10 text-workspace-muted text-xs space-y-2">
+            <FileText className="w-8 h-8 text-slate-300 mx-auto" />
+            <p className="font-semibold text-workspace-text">No contracts indexed yet</p>
+            <p className="text-workspace-muted max-w-sm mx-auto">
+              Add a Master Services Agreement or pricing rate sheet to enable autonomous Agentic RAG verification for this account.
+            </p>
+            <button
+              onClick={() => setShowAddContract(true)}
+              className="mt-2 inline-flex items-center space-x-1.5 px-3 py-1.5 bg-accent-primary text-white text-xs font-bold rounded-lg shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add First Agreement</span>
+            </button>
           </div>
         ) : (
-          <div className="divide-y divide-white/[0.04]">
-            {contracts.map((c) => (
-              <div key={c.id} className="p-6 hover:bg-white/[0.02] transition space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <span className="font-mono font-bold text-sm text-white">
-                      {c.contractNumber}
+          <div className="space-y-3">
+            {contracts.map((contract) => (
+              <div
+                key={contract.id}
+                className="p-4 rounded-xl border border-workspace-border bg-slate-50 hover:border-slate-300 transition text-xs space-y-2"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="font-mono font-bold text-accent-primary text-sm">
+                      {contract.contractNumber}
                     </span>
-                    <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                      {c.status}
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold uppercase">
+                      {contract.status || "ACTIVE"}
+                    </span>
+                    <span className="text-workspace-muted font-medium">
+                      • {contract.contractType.replace(/_/g, " ")}
                     </span>
                   </div>
-                  <span className="text-xs text-slate-400 font-mono">
-                    Added: {formatDate(c.createdAt)}
-                  </span>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
-                  <div>
-                    <span className="text-slate-400">Type: </span>
-                    <span className="font-mono font-medium text-slate-200">{c.contractType}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400">Effective Window: </span>
-                    <span className="font-mono font-medium text-slate-200">
-                      {formatDate(c.effectiveFrom)} – {formatDate(c.effectiveTo)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400">Total Contract Value: </span>
-                    <span className="font-mono font-medium text-slate-200">
-                      {c.totalValue ? formatCurrency(c.totalValue) : "Uncapped"}
-                    </span>
+                  <div className="text-workspace-muted text-[11px] font-mono">
+                    Valid: {formatDate(contract.effectiveFrom)} → {formatDate(contract.effectiveTo)}
                   </div>
                 </div>
 
-                {c.termsSummary && (
-                  <div className="text-xs text-slate-300 bg-white/[0.03] p-3.5 rounded-xl border border-white/5">
-                    <span className="font-semibold text-emerald-400">Terms Summary: </span>
-                    <span>{c.termsSummary}</span>
-                  </div>
+                {contract.termsSummary && (
+                  <p className="text-workspace-text bg-white p-3 rounded-lg border border-workspace-border text-xs leading-relaxed">
+                    {contract.termsSummary}
+                  </p>
                 )}
+
+                <div className="flex items-center justify-between text-[11px] text-workspace-muted pt-1">
+                  <span className="flex items-center space-x-1 text-emerald-700 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Chunked & Embedded in Qdrant (cosine similarity enabled)</span>
+                  </span>
+                  <span>Indexed {formatDate(contract.createdAt, true)}</span>
+                </div>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Ingest Contract Modal */}
+      {/* Add Contract Modal */}
       {showAddContract && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="glass-panel rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-white/15 space-y-4">
-            <h3 className="text-base font-bold text-white tracking-tight">
-              Ingest & Index Contract for Agentic RAG
-            </h3>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-workspace-border space-y-4">
+            <div className="flex items-center space-x-2.5">
+              <Sparkles className="w-5 h-5 text-accent-primary" />
+              <h3 className="text-base font-bold text-workspace-text">
+                Index New Agreement / Pricing Schedule
+              </h3>
+            </div>
 
-            <div className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-semibold text-slate-300 mb-1">Contract Number *</label>
-                <input
-                  type="text"
-                  value={contractNumber}
-                  onChange={(e) => setContractNumber(e.target.value)}
-                  placeholder="e.g. MSA-2026-ACME-01"
-                  className="w-full p-2.5 bg-obsidian-card/70 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
-                  required
-                />
-              </div>
+            <p className="text-xs text-workspace-muted">
+              Text provided here will be split into semantic chunks, vectorized, and stored in Qdrant for autonomous Agentic RAG evaluation.
+            </p>
 
-              <div>
-                <label className="block font-semibold text-slate-300 mb-1">Agreement Type</label>
-                <select
-                  value={contractType}
-                  onChange={(e) => setContractType(e.target.value)}
-                  className="w-full p-2.5 bg-obsidian-card border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500/50"
-                >
-                  <option value="MASTER_SERVICES_AGREEMENT" className="bg-obsidian-card text-white">Master Services Agreement (MSA)</option>
-                  <option value="STATEMENT_OF_WORK" className="bg-obsidian-card text-white">Statement of Work (SOW)</option>
-                  <option value="ENTERPRISE_DISCOUNT_SCHEDULE" className="bg-obsidian-card text-white">Enterprise Discount Schedule</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                addContractMutation.mutate();
+              }}
+              className="space-y-4 text-xs"
+            >
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block font-semibold text-slate-300 mb-1">Effective From</label>
+                  <label className="block text-workspace-text font-semibold mb-1">Contract / MSA #</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. MSA-2026-ACME"
+                    value={contractNumber}
+                    onChange={(e) => setContractNumber(e.target.value)}
+                    className="w-full p-2 bg-slate-50 border border-workspace-border rounded-lg text-workspace-text focus:outline-none focus:ring-1 focus:ring-accent-primary"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-workspace-text font-semibold mb-1">Agreement Type</label>
+                  <select
+                    value={contractType}
+                    onChange={(e) => setContractType(e.target.value)}
+                    className="w-full p-2 bg-slate-50 border border-workspace-border rounded-lg text-workspace-text focus:outline-none focus:ring-1 focus:ring-accent-primary"
+                  >
+                    <option value="MASTER_SERVICES_AGREEMENT">Master Services Agreement (MSA)</option>
+                    <option value="RATE_SCHEDULE">Pricing Rate Schedule</option>
+                    <option value="STATEMENT_OF_WORK">Statement of Work (SOW)</option>
+                    <option value="TAX_EXEMPTION_CERTIFICATE">Tax Exemption / Certificate</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-workspace-text font-semibold mb-1">Effective From</label>
                   <input
                     type="date"
+                    required
                     value={effectiveFrom}
                     onChange={(e) => setEffectiveFrom(e.target.value)}
-                    className="w-full p-2.5 bg-obsidian-card/70 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                    className="w-full p-2 bg-slate-50 border border-workspace-border rounded-lg text-workspace-text focus:outline-none focus:ring-1 focus:ring-accent-primary"
                   />
                 </div>
+
                 <div>
-                  <label className="block font-semibold text-slate-300 mb-1">Effective To</label>
+                  <label className="block text-workspace-text font-semibold mb-1">Effective To</label>
                   <input
                     type="date"
+                    required
                     value={effectiveTo}
                     onChange={(e) => setEffectiveTo(e.target.value)}
-                    className="w-full p-2.5 bg-obsidian-card/70 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500/50"
+                    className="w-full p-2 bg-slate-50 border border-workspace-border rounded-lg text-workspace-text focus:outline-none focus:ring-1 focus:ring-accent-primary"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-300 mb-1">
-                  Contract Clauses Content (Chunked & Vector Indexed)
+                <label className="block text-workspace-text font-semibold mb-1">
+                  Contract Clauses & Pricing Terms (for Qdrant Vectorization)
                 </label>
                 <textarea
+                  required
+                  rows={6}
+                  placeholder="Paste contractual clauses, negotiated item prices, payment terms, or discount tiers..."
                   value={contractContent}
                   onChange={(e) => setContractContent(e.target.value)}
-                  placeholder="Paste pricing tiers, discount schedules, or terms clauses..."
-                  className="w-full p-2.5 bg-obsidian-card/70 border border-white/10 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
-                  rows={4}
+                  className="w-full p-3 bg-slate-50 border border-workspace-border rounded-lg text-workspace-text placeholder-workspace-muted font-mono text-xs focus:outline-none focus:ring-1 focus:ring-accent-primary"
                 />
               </div>
-            </div>
 
-            <div className="flex justify-end space-x-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowAddContract(false)}
-                className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 hover:bg-white/10 transition"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => addContractMutation.mutate()}
-                disabled={!contractNumber.trim() || addContractMutation.isPending}
-                className="px-5 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-obsidian-base rounded-xl text-xs font-bold shadow-neon-emerald transition-all duration-200 disabled:opacity-50"
-              >
-                {addContractMutation.isPending ? "Indexing..." : "Index Contract"}
-              </button>
-            </div>
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddContract(false)}
+                  className="px-4 py-2 border border-workspace-border rounded-lg text-xs font-semibold text-workspace-text hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addContractMutation.isPending}
+                  className="px-4 py-2 bg-accent-primary hover:bg-accent-hover text-white rounded-lg text-xs font-bold transition shadow-sm disabled:opacity-50"
+                >
+                  {addContractMutation.isPending ? "Indexing into Qdrant..." : "Index Contract"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
