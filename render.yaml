@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: p2i-backend
+    name: flowinvoice-backend
     env: node
     rootDir: backend
-    plan: standard
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /health
@@ -17,7 +17,7 @@ services:
       - key: AWS_REGION
         value: us-east-1
       - key: AWS_ACCESS_KEY_ID
-        sync: false
+        value: AKIAUXZY3NPTUDACXDWJ
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
       - key: AWS_S3_BUCKET_NAME
@@ -39,4 +39,4 @@ services:
       - key: MONGODB_URI
         sync: false
       - key: CORS_ORIGIN
-        sync: false
+        value: "*"
