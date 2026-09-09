@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: p2i-backend
+    env: node
+    rootDir: backend
+    plan: standard
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: STORAGE_PROVIDER
+        value: s3
+      - key: AWS_REGION
+        value: us-east-1
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_S3_BUCKET_NAME
+        value: p2i-bucket
+      - key: VECTOR_PROVIDER
+        value: qdrant
+      - key: QDRANT_URL
+        value: https://32fe9957-b6bc-4f9b-9a51-1f4f5c959c0e.sa-east-1-0.aws.cloud.qdrant.io:6333
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: REFRESH_TOKEN_SECRET
+        generateValue: true
+      - key: MONGODB_URI
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false

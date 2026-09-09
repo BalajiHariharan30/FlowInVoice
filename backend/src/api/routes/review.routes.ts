@@ -8,6 +8,8 @@ import {
 } from "../../repositories/index.js";
 import { POProcessingWorkflow } from "../../agents/workflow.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
+import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
+import { logger } from "../../utils/logger.js";
 
 export const reviewRouter = Router();
 
@@ -99,7 +101,7 @@ reviewRouter.get("/:reviewId", async (req: Request, res: Response): Promise<void
  */
 reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.user!.tenantId;
-  const { resolutionNotes } = req.body || {};
+  const { resolutionNotes, correctedLineItems } = req.body || {};
   const reviewId = req.params.reviewId as string;
   const review = await ReviewRepository.findById(tenantId, reviewId);
 
@@ -123,6 +125,14 @@ reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Pro
     return;
   }
 
+  // If reviewer provided corrected line items, persist them to the PO before resuming
+  if (Array.isArray(correctedLineItems) && correctedLineItems.length > 0) {
+    await PurchaseOrderRepository.updateExtraction(tenantId, review.entityId, {
+      lineItems: correctedLineItems,
+      extractionConfidence: 1.0
+    });
+  }
+
   const resolved = await ReviewRepository.resolveReview(
     tenantId,
     review._id.toString(),
@@ -132,15 +142,30 @@ reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Pro
   );
 
   // Resume workflow at the appropriate stage
-  if (review.stage === "extraction") {
-    // Resume extraction / verification -> advance to validating
-    await PurchaseOrderRepository.updateStatus(tenantId, review.entityId, "VALIDATING");
-    // Run async workflow resumption
-    setImmediate(() => POProcessingWorkflow.runWorkflow(tenantId, review.entityId));
-  } else if (review.stage === "validation") {
-    // Advance to invoice generation
-    await PurchaseOrderRepository.updateStatus(tenantId, review.entityId, "APPROVED");
-    setImmediate(() => POProcessingWorkflow.runWorkflow(tenantId, review.entityId));
+  if (review.stage === "extraction" || review.stage === "validation") {
+    // Advance PO status
+    const targetStatus = review.stage === "extraction" ? "VALIDATING" : "APPROVED";
+    await PurchaseOrderRepository.updateStatus(tenantId, review.entityId, targetStatus);
+
+    // Resume via LangGraph Orchestration Workflow asynchronously with legacy fallback
+    setImmediate(async () => {
+      try {
+        await runOrchestrationWorkflow(tenantId, review.entityId);
+      } catch (err: any) {
+        logger.error(
+          { err, tenantId, poId: review.entityId },
+          "Error running LangGraph workflow upon review approval; attempting legacy fallback"
+        );
+        try {
+          await POProcessingWorkflow.runWorkflow(tenantId, review.entityId);
+        } catch (legacyErr: any) {
+          logger.error(
+            { legacyErr, tenantId, poId: review.entityId },
+            "Legacy workflow also failed upon review approval"
+          );
+        }
+      }
+    });
   } else if (review.stage === "invoice") {
     // Advance invoice to ISSUED
     await InvoiceRepository.updateStatus(tenantId, review.entityId, "ISSUED", {

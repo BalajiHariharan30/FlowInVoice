@@ -96,13 +96,18 @@ export class StorageService {
 
   static async getFileBuffer(s3Key: string): Promise<Buffer | null> {
     if (env.STORAGE_PROVIDER === "s3" && this.s3Client) {
-      const command = new GetObjectCommand({
-        Bucket: env.AWS_S3_BUCKET_NAME,
-        Key: s3Key
-      });
-      const response = await this.s3Client.send(command);
-      const byteArray = await response.Body?.transformToByteArray();
-      return byteArray ? Buffer.from(byteArray) : null;
+      try {
+        const command = new GetObjectCommand({
+          Bucket: env.AWS_S3_BUCKET_NAME,
+          Key: s3Key
+        });
+        const response = await this.s3Client.send(command);
+        const byteArray = await response.Body?.transformToByteArray();
+        return byteArray ? Buffer.from(byteArray) : null;
+      } catch (err: any) {
+        logger.warn({ err: err.message, s3Key }, "File not found or inaccessible in S3, returning null");
+        return null;
+      }
     } else {
       this.initMockStorage();
       const localFilePath = path.join(this.mockStorageDir, s3Key.replace(/\//g, "_"));

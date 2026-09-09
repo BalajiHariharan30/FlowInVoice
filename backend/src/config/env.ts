@@ -22,10 +22,16 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number().default(6379),
   REDIS_PASSWORD: z.string().optional().default(""),
 
-  AWS_REGION: z.string().default("us-east-1"),
-  AWS_ACCESS_KEY_ID: z.string().optional().default("mock-access-key"),
-  AWS_SECRET_ACCESS_KEY: z.string().optional().default("mock-secret-key"),
-  AWS_S3_BUCKET_NAME: z.string().default("p2i-documents-bucket"),
+  AWS_REGION: z.string().default(process.env.AWS_REGION || "us-east-1"),
+  AWS_ACCESS_KEY_ID: z
+    .string()
+    .default(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY || "mock-access-key"),
+  AWS_SECRET_ACCESS_KEY: z
+    .string()
+    .default(process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_KEY || "mock-secret-key"),
+  AWS_S3_BUCKET_NAME: z
+    .string()
+    .default(process.env.AWS_S3_BUCKET_NAME || process.env.S3_BUCKET_NAME || "p2i-documents-bucket"),
   STORAGE_PROVIDER: z.enum(["s3", "mock"]).default("mock"),
 
   QDRANT_URL: z.string().default("http://localhost:6333"),

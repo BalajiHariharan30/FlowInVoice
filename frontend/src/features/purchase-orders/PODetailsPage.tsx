@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
+import { env } from "../../lib/env";
 import { PurchaseOrder, HumanReview, AuditLogItem, POStatus } from "../../types";
 import { formatCurrency, formatDate } from "../../lib/format";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -10,91 +11,25 @@ import { LoadingSkeleton, ErrorBanner } from "../../components/feedback";
 import { PDFDocumentViewer } from "../../components/document/PDFDocumentViewer";
 import { usePOStatus } from "../../hooks/usePOStatus";
 import { useToast } from "../../contexts/ToastContext";
+import { AgentPipelinePanel } from "./components/AgentPipelinePanel";
 import {
-  FileText,
   RotateCw,
   ExternalLink,
   Building,
-  Calendar,
   AlertTriangle,
-  Receipt,
   Download,
   ShieldCheck,
   CheckCircle2,
-  Clock,
   Sparkles,
   ArrowRight,
-  Database,
-  Search,
   Check,
   Copy,
   ChevronRight,
   Code2,
-  Zap,
-  Info,
-  Layers,
   FileCheck2
 } from "lucide-react";
 
-interface AgentStepDef {
-  id: string;
-  name: string;
-  role: string;
-  model: string;
-  statusMatch: POStatus[];
-  description: string;
-}
 
-const AGENT_PIPELINE_STEPS: AgentStepDef[] = [
-  {
-    id: "intake",
-    name: "Intake Agent",
-    role: "Document Ingestion & Hash Audit",
-    model: "gemini-1.5-flash",
-    statusMatch: ["UPLOADED", "PROCESSING"],
-    description: "S3 payload verification, mime analysis, sha256 checksum"
-  },
-  {
-    id: "extraction",
-    name: "Extraction Agent",
-    role: "Multimodal Structured Parsing",
-    model: "gemini-1.5-pro",
-    statusMatch: ["EXTRACTED"],
-    description: "Line items, quantities, dates, buyer/seller entities"
-  },
-  {
-    id: "contract",
-    name: "Contract Verifier",
-    role: "Customer Master & Terms Match",
-    model: "gemini-1.5-flash",
-    statusMatch: ["VALIDATING"],
-    description: "Validates customer account, billing address & credit terms"
-  },
-  {
-    id: "rag",
-    name: "Agentic RAG Engine",
-    role: "Qdrant Policy & Pricing Match",
-    model: "gemini-1.5-pro",
-    statusMatch: ["RAG_CHECKING"],
-    description: "Retrieves rate sheets, MSA terms, volume discounts"
-  },
-  {
-    id: "compliance",
-    name: "Compliance Agent",
-    role: "GST & Tax Rules Evaluation",
-    model: "gemini-1.5-flash",
-    statusMatch: ["COMPLIANCE_CHECKING"],
-    description: "Validates GSTIN, interstate IGST vs intra CGST/SGST"
-  },
-  {
-    id: "invoice",
-    name: "Invoice Generator",
-    role: "Canonical Invoice Issuance",
-    model: "gemini-1.5-pro",
-    statusMatch: ["INVOICE_GENERATING", "INVOICE_VALIDATING", "COMPLETED"],
-    description: "Calculates Decimal.js totals, generates invoice & audit proof"
-  }
-];
 
 export const PODetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -161,6 +96,127 @@ export const PODetailsPage: React.FC = () => {
         type: "error",
         title: "Retry Failed",
         message: err?.message || "Failed to trigger retry. Please try again."
+      });
+    }
+  });
+
+  const [streamingActiveStep, setStreamingActiveStep] = useState<string | null>(null);
+  const [streamingCompletedSteps, setStreamingCompletedSteps] = useState<string[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+
+  const runLangGraphWithTelemetry = async () => {
+    if (!id || isStreaming) return;
+    setIsStreaming(true);
+    setStreamingActiveStep("extraction");
+    setStreamingCompletedSteps([]);
+
+    const token = localStorage.getItem("accessToken");
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    try {
+      const response = await fetch(`${env.VITE_API_BASE_URL}/pos/${id}/stream-graph`, {
+        method: "GET",
+        headers
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || `Server returned status ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const messages = buffer.split("\n\n");
+          buffer = messages.pop() || "";
+
+          for (const message of messages) {
+            if (!message.trim()) continue;
+            const matchEvent = message.match(/event:\s*(.+)/);
+            const matchData = message.match(/data:\s*(.+)/);
+            const eventName = matchEvent ? matchEvent[1].trim() : "";
+            let eventData: any = {};
+            try {
+              if (matchData) eventData = JSON.parse(matchData[1].trim());
+            } catch {
+              // Ignore parse error
+            }
+
+            if (eventName === "step_update") {
+              const stepName = eventData.step;
+              setStreamingActiveStep(stepName);
+              setStreamingCompletedSteps((prev) => Array.from(new Set([...prev, stepName])));
+            } else if (eventName === "workflow_complete") {
+              setStreamingCompletedSteps((prev) =>
+                Array.from(new Set([...prev, eventData.currentStep || "posting"]))
+              );
+              addToast({
+                type: eventData.isBusinessException ? "warning" : "success",
+                title: eventData.isBusinessException ? "Routed to Human Review" : "Pipeline Completed",
+                message: eventData.isBusinessException
+                  ? "PO flagged for Human Review by LangGraph agentic policy check."
+                  : `PO successfully processed & posted to ERP. Invoice: ${eventData.invoiceNumber || "Issued"}`
+              });
+            } else if (eventName === "workflow_error") {
+              addToast({
+                type: "error",
+                title: "Workflow Error",
+                message: eventData.message || "Pipeline execution failed."
+              });
+            }
+          }
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["po", id] });
+      queryClient.invalidateQueries({ queryKey: ["reviews"] });
+      queryClient.invalidateQueries({ queryKey: ["audit", id] });
+      pollRefetch();
+    } catch (err: any) {
+      addToast({
+        type: "error",
+        title: "Workflow Execution Error",
+        message: err.message || "Failed to execute LangGraph streaming pipeline."
+      });
+    } finally {
+      setIsStreaming(false);
+      setStreamingActiveStep(null);
+    }
+  };
+
+  const runLangGraphMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post(`/pos/${id}/process-graph`);
+      return res.data;
+    },
+    onSuccess: (data: any) => {
+      addToast({
+        type: data.isBusinessException ? "warning" : "success",
+        title: data.isBusinessException ? "Routed to Human Review" : "Pipeline Completed",
+        message: data.isBusinessException
+          ? "PO flagged for Human Review by LangGraph agentic policy check."
+          : `PO successfully processed & posted to ERP. Invoice: ${data.invoiceNumber || "Issued"}`
+      });
+      queryClient.invalidateQueries({ queryKey: ["po", id] });
+      queryClient.invalidateQueries({ queryKey: ["reviews"] });
+      queryClient.invalidateQueries({ queryKey: ["audit", id] });
+      pollRefetch();
+    },
+    onError: (err: any) => {
+      addToast({
+        type: "error",
+        title: "Workflow Execution Error",
+        message: err.response?.data?.message || err?.message || "Failed to execute LangGraph pipeline."
       });
     }
   });
@@ -257,6 +313,22 @@ export const PODetailsPage: React.FC = () => {
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={runLangGraphWithTelemetry}
+            disabled={isStreaming || runLangGraphMutation.isPending || currentStatus === "COMPLETED"}
+            className="inline-flex items-center space-x-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm transition"
+            title="Execute autonomous 7-agent LangGraph workflow with real-time SSE streaming telemetry"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isStreaming || runLangGraphMutation.isPending ? "animate-spin" : ""}`} />
+            <span>
+              {isStreaming
+                ? `Running (${streamingActiveStep || "Pipeline"})...`
+                : runLangGraphMutation.isPending
+                ? "Running Graph..."
+                : "Run LangGraph Pipeline"}
+            </span>
+          </button>
+
           {isFailed && (
             <button
               onClick={() => retryMutation.mutate()}
@@ -676,139 +748,16 @@ export const PODetailsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* PANEL 3: Right Dark Technical AI Agent Pipeline & RAG Panel (3 Columns) */}
-        <div className="xl:col-span-3 space-y-4">
-          {/* Agent Workflow Card (Dark Technical Surface) */}
-          <div className="bg-dark-surface border border-dark-border rounded-xl p-4 text-white shadow-lg space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-dark-border">
-              <div className="flex items-center space-x-2">
-                <Zap className="w-4 h-4 text-accent-secondary" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Agentic AI Pipeline
-                </h3>
-              </div>
-              <span className="inline-flex items-center space-x-1 text-[10px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                <span>Active</span>
-              </span>
-            </div>
-
-            {/* Stepped Agent Progression */}
-            <div className="space-y-2.5">
-              {AGENT_PIPELINE_STEPS.map((step, idx) => {
-                const isStepPast = currentStepIdx > idx * 2;
-                const isStepActive =
-                  step.statusMatch.includes(currentStatus) ||
-                  (idx === 0 && currentStatus === "UPLOADED");
-
-                return (
-                  <div
-                    key={step.id}
-                    className={`p-2.5 rounded-lg border transition-all text-xs ${
-                      isStepActive
-                        ? "bg-accent-primary/10 border-accent-secondary text-white shadow-sm"
-                        : isStepPast
-                        ? "bg-dark-card/60 border-dark-border text-slate-300"
-                        : "bg-dark-card/30 border-dark-border/50 text-slate-500"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        {isStepPast ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                        ) : isStepActive ? (
-                          <div className="w-4 h-4 rounded-full border-2 border-accent-secondary border-t-transparent animate-spin flex-shrink-0" />
-                        ) : (
-                          <div className="w-4 h-4 rounded-full bg-dark-border text-slate-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
-                            {idx + 1}
-                          </div>
-                        )}
-                        <span className="font-bold tracking-tight text-slate-100">{step.name}</span>
-                      </div>
-                      <span className="text-[10px] font-mono text-slate-400">{step.model}</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1 pl-6 leading-tight">
-                      {step.description}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Agentic RAG Policy & Contract Verification Panel */}
-          <div className="bg-dark-surface border border-dark-border rounded-xl p-4 text-white shadow-lg space-y-3">
-            <div className="flex items-center space-x-2 pb-2 border-b border-dark-border">
-              <Database className="w-4 h-4 text-emerald-400" />
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Agentic RAG Verification
-              </h4>
-            </div>
-
-            <div className="space-y-2 text-xs">
-              <div className="p-2.5 rounded bg-dark-card border border-dark-border space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-slate-400">Retrieved Policy Source</span>
-                  <span className="font-mono text-emerald-400 font-bold">Similarity: 0.94</span>
-                </div>
-                <div className="font-semibold text-slate-200">
-                  Master Services Agreement #MSA-2024-ACME
-                </div>
-                <div className="text-[11px] text-slate-400 font-mono">
-                  Section 4.2 • Tier 1 Volume Pricing Schedule
-                </div>
-              </div>
-
-              {/* Validation Checklist */}
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center space-x-2 text-[11px] text-emerald-400">
-                  <Check className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Contract Terms Match: Validated</span>
-                </div>
-                <div className="flex items-center space-x-2 text-[11px] text-emerald-400">
-                  <Check className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Pricing Tolerance: 0.00% Deviation</span>
-                </div>
-                <div className="flex items-center space-x-2 text-[11px] text-emerald-400">
-                  <Check className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>GSTIN Validated against Master Registry</span>
-                </div>
-                <div className="flex items-center space-x-2 text-[11px] text-emerald-400">
-                  <Check className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Payment Terms Authorized (NET_30)</span>
-                </div>
-              </div>
-
-              {/* AI Rationale Summary */}
-              <div className="p-2.5 rounded bg-slate-900/90 border border-dark-border text-[11px] text-slate-300 leading-relaxed font-sans">
-                <span className="font-bold text-slate-200 block mb-0.5">Audit-Ready AI Rationale:</span>
-                "All line items cross-referenced against executed MSA terms. Unit pricing aligns with 
-                discount bracket A-2. Interstate tax applied correctly based on supplier Karnataka registration."
-              </div>
-            </div>
-          </div>
-
-          {/* Pipeline Final Outcome Card */}
-          {isCompleted && (
-            <div className="bg-emerald-950/40 border border-emerald-700/50 rounded-xl p-4 text-emerald-200 space-y-2 text-xs">
-              <div className="flex items-center space-x-2 font-bold text-emerald-300">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Invoice Issued Successfully</span>
-              </div>
-              <p className="text-[11px] text-emerald-300/80">
-                Purchase order verified and converted to official billing invoice.
-              </p>
-              {invoiceData && (
-                <Link
-                  to={`/invoices/${invoiceData.id}`}
-                  className="block text-center py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition"
-                >
-                  View Invoice #{invoiceData.invoiceNumber}
-                </Link>
-              )}
-            </div>
-          )}
-        </div>
+        {/* PANEL 3: Right Dark AI Agent Pipeline (extracted component) */}
+        <AgentPipelinePanel
+          currentStatus={currentStatus}
+          currentStepIdx={currentStepIdx}
+          isStreaming={isStreaming}
+          streamingActiveStep={streamingActiveStep}
+          streamingCompletedSteps={streamingCompletedSteps}
+          isCompleted={isCompleted}
+          invoiceData={invoiceData}
+        />
       </div>
     </div>
   );

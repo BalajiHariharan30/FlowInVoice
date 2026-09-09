@@ -24,12 +24,14 @@ export const AuditHistoryPage: React.FC = () => {
   const navigate = useNavigate();
   const [filterEntity, setFilterEntity] = useState(entityId || "system");
 
+  // Fix: Prevent GET /api/v1/audit/ from firing when entityId is empty
   const { data, isLoading, error, refetch } = useQuery<{ data: AuditLogItem[] }>({
     queryKey: ["audit", filterEntity],
     queryFn: async () => {
-      const res = await apiClient.get<{ data: AuditLogItem[] }>(`/audit/${filterEntity}`);
+      const res = await apiClient.get<{ data: AuditLogItem[] }>(`/audit/${encodeURIComponent(filterEntity.trim())}`);
       return res.data;
-    }
+    },
+    enabled: Boolean(filterEntity && filterEntity.trim().length > 0)
   });
 
   const logs = data?.data || [];
@@ -106,6 +108,7 @@ export const AuditHistoryPage: React.FC = () => {
             return (
               <div
                 key={log.id}
+                id={`audit-event-${log.id}`}
                 className="workspace-card p-5 hover:border-slate-300 transition text-xs space-y-3"
               >
                 {/* Entry Header */}

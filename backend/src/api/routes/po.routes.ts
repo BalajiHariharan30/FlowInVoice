@@ -6,6 +6,9 @@ import { PurchaseOrderRepository, AuditRepository } from "../../repositories/ind
 import { StorageService } from "../../storage/s3.service.js";
 import { QueueManager } from "../../workers/queue.js";
 import { POStatus } from "../../types/index.js";
+import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
+import { workflowRateLimiter } from "../../ai/workflow/rate-limiter.js";
+import { logger } from "../../utils/logger.js";
 
 export const poRouter = Router();
 
@@ -110,6 +113,137 @@ poRouter.post("/", upload.single("file"), async (req: Request, res: Response): P
       details: {},
       requestId: req.requestId || ""
     });
+  }
+});
+
+/**
+ * POST /pos/:poId/process-graph
+ * Invokes the 7-agent LangGraph orchestration pipeline for a purchase order.
+ * Route-scoped rate-limited (20 req/min), tenant-isolated, 30s timeout bounded.
+ */
+poRouter.post("/:poId/process-graph", workflowRateLimiter, async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.user!.tenantId;
+  const poId = req.params.poId as string;
+
+  if (!poId || poId.trim().length === 0) {
+    res.status(400).json({
+      code: "VALIDATION_FAILURE",
+      message: "PO ID is required",
+      details: {},
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
+  try {
+    const result = await runOrchestrationWorkflow(tenantId, poId);
+
+    // Business exception mapped to 200 with exception payload (§0.9)
+    if (result.isBusinessException) {
+      res.status(200).json({
+        status: "HUMAN_REVIEW",
+        poId: result.poId,
+        workflowId: result.workflowId,
+        isBusinessException: true,
+        reviewId: result.reviewId,
+        validationErrors: result.validationErrors,
+        currentStep: result.currentStep
+      });
+      return;
+    }
+
+    // Success -> 200
+    res.status(200).json({
+      status: "COMPLETED",
+      poId: result.poId,
+      workflowId: result.workflowId,
+      isBusinessException: false,
+      invoiceId: result.invoiceId,
+      invoiceNumber: result.invoiceNumber,
+      erpPostingId: result.erpPostingId,
+      currentStep: result.currentStep
+    });
+  } catch (err: any) {
+    const isTimeout = err.message?.includes("timed out");
+    logger.error({ err, tenantId, poId }, "Orchestration workflow route error");
+
+    res.status(isTimeout ? 504 : 500).json({
+      code: isTimeout ? "GATEWAY_TIMEOUT" : "TECHNICAL_FAILURE",
+      message: isTimeout
+        ? "Workflow orchestration processing timed out. Please retry."
+        : "An unexpected internal failure occurred while processing workflow.",
+      details: {},
+      requestId: req.requestId || ""
+    });
+  }
+});
+
+/**
+ * GET /pos/:poId/stream-graph
+ * Streams real-time step telemetry for the LangGraph orchestration pipeline via Server-Sent Events (SSE).
+ * Route-scoped rate-limited (20 req/min), tenant-isolated, 30s timeout bounded.
+ */
+poRouter.get("/:poId/stream-graph", workflowRateLimiter, async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.user!.tenantId;
+  const poId = req.params.poId as string;
+
+  if (!poId || poId.trim().length === 0) {
+    res.status(400).json({
+      code: "VALIDATION_FAILURE",
+      message: "PO ID is required",
+      details: {},
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
+  // Set SSE response headers
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const sendEvent = (event: string, data: any) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendEvent("workflow_start", {
+    poId,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const result = await runOrchestrationWorkflow(tenantId, poId, {
+      onStepUpdate: (stepEvent) => {
+        sendEvent("step_update", stepEvent);
+      }
+    });
+
+    sendEvent("workflow_complete", {
+      status: result.status,
+      poId: result.poId,
+      workflowId: result.workflowId,
+      isBusinessException: result.isBusinessException,
+      invoiceId: result.invoiceId,
+      invoiceNumber: result.invoiceNumber,
+      reviewId: result.reviewId,
+      erpPostingId: result.erpPostingId,
+      currentStep: result.currentStep,
+      validationErrors: result.validationErrors
+    });
+  } catch (err: any) {
+    const isTimeout = err.message?.includes("timed out");
+    logger.error({ err, tenantId, poId }, "Orchestration workflow SSE stream error");
+    sendEvent("workflow_error", {
+      code: isTimeout ? "GATEWAY_TIMEOUT" : "TECHNICAL_FAILURE",
+      message: isTimeout
+        ? "Workflow orchestration processing timed out. Please retry."
+        : "An unexpected internal failure occurred while processing workflow.",
+      details: {}
+    });
+  } finally {
+    res.write("event: done\ndata: {}\n\n");
+    res.end();
   }
 });
 

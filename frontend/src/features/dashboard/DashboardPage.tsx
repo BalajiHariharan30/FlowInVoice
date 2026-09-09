@@ -5,6 +5,7 @@ import { apiClient } from "../../lib/axios";
 import { DashboardSummary, DashboardAnalytics } from "../../types";
 import { formatCurrency, formatPercent } from "../../lib/format";
 import { LoadingSkeleton, ErrorBanner } from "../../components/feedback";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   FileText,
   CheckCircle2,
@@ -43,10 +44,25 @@ import {
 } from "recharts";
 
 export const DashboardPage: React.FC = () => {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [dateRange, setDateRange] = useState("30d");
   const [selectedCustomer, setSelectedCustomer] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
+
+  const greeting = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) return "Good morning";
+    if (hour >= 12 && hour < 17) return "Good afternoon";
+    if (hour >= 17 && hour < 22) return "Good evening";
+    return "Welcome back";
+  }, []);
+
+  const userName = useMemo(() => {
+    if (!user?.name) return "";
+    const clean = user.name.split(/[\s(]/)[0].trim();
+    return clean.toLowerCase() === "enterprise" ? "" : clean;
+  }, [user?.name]);
 
   const {
     data: summary,
@@ -163,7 +179,9 @@ export const DashboardPage: React.FC = () => {
       {/* Header & Operations Controls (§7) */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-2 border-b border-workspace-border">
         <div>
-          <h1 className="text-xl font-bold text-workspace-text tracking-tight">Good morning</h1>
+          <h1 className="text-xl font-bold text-workspace-text tracking-tight">
+            {greeting}{userName ? `, ${userName}` : ""}
+          </h1>
           <p className="text-xs text-workspace-muted mt-0.5">
             Here&apos;s what&apos;s happening across your invoice operations.
           </p>
