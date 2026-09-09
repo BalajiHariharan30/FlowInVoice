@@ -21,9 +21,22 @@ export function createApp(): Express {
 
   // Global Security & Parsing Middleware
   app.use(helmet({ crossOriginResourcePolicy: false }));
+
+  const allowedOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
   app.use(
     cors({
-      origin: env.CORS_ORIGIN,
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (
+          allowedOrigins.includes("*") ||
+          allowedOrigins.includes(origin) ||
+          origin.endsWith(".vercel.app") ||
+          origin.includes("localhost")
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, false);
+      },
       credentials: true
     })
   );
