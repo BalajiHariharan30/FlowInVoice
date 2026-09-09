@@ -39,4 +39,4 @@ services:
       - key: MONGODB_URI
         sync: false
       - key: CORS_ORIGIN
-        value: "*"
+        value: "https://flow-in-voice.vercel.app,http://localhost:5173"

@@ -22,31 +22,50 @@ export function createApp(): Express {
   // Global Security & Parsing Middleware
   app.use(helmet({ crossOriginResourcePolicy: false }));
 
-  const allowedOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        if (
-          allowedOrigins.includes("*") ||
-          allowedOrigins.includes(origin) ||
-          origin.endsWith(".vercel.app") ||
-          origin.includes("localhost")
-        ) {
-          return callback(null, true);
-        }
-        return callback(null, false);
-      },
-      credentials: true
-    })
-  );
+  // Explicit CORS configuration per Vercel + production requirements
+  const explicitOrigins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://flow-in-voice.vercel.app"
+  ];
+  if (env.CORS_ORIGIN && env.CORS_ORIGIN !== "*") {
+    env.CORS_ORIGIN.split(",").forEach((o) => {
+      const trimmed = o.trim();
+      if (trimmed && !explicitOrigins.includes(trimmed)) explicitOrigins.push(trimmed);
+    });
+  }
+
+  const corsOptions: cors.CorsOptions = {
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        explicitOrigins.includes(origin) ||
+        /\.vercel\.app$/.test(origin) ||
+        origin.includes("localhost")
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
+    credentials: true,
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-tenant-id", "x-request-id"]
+  };
+
+  app.use(cors(corsOptions));
+  app.options("*", cors(corsOptions));
+
   app.use(express.json({ limit: "20mb" }));
   app.use(express.urlencoded({ extended: true, limit: "20mb" }));
   app.use(requestIdMiddleware);
 
-  // Health check
+  // Health check with deployment version tracking
   app.get("/health", (req: Request, res: Response) => {
-    res.status(200).json({ status: "healthy", timestamp: new Date().toISOString() });
+    res.status(200).json({
+      status: "healthy",
+      version: "1.0.2",
+      timestamp: new Date().toISOString()
+    });
   });
 
   // OpenAPI spec documentation
