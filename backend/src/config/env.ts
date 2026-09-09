@@ -46,11 +46,14 @@ const envSchema = z.object({
   DOCUMENT_AI_PROVIDER: z.enum(["mistral_ocr", "vision_fallback", "mock"]).default("mock")
 });
 
-const parsed = envSchema.safeParse(process.env);
+export type EnvConfig = z.infer<typeof envSchema>;
 
-if (!parsed.success) {
-  console.error("Invalid environment variables:", parsed.error.format());
+let parsedEnv: EnvConfig;
+try {
+  parsedEnv = envSchema.parse(process.env);
+} catch (err: any) {
+  console.error("Invalid environment variables:", err);
   process.exit(1);
 }
 
-export const env = parsed.data;
+export const env: EnvConfig = parsedEnv;
