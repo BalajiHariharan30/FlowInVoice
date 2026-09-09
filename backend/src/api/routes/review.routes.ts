@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../middleware/error-handler.js";
 import { authenticate } from "../../auth/auth.middleware.js";
 import {
   ReviewRepository,
@@ -19,7 +20,7 @@ reviewRouter.use(authenticate);
  * GET /reviews
  * Filterable by stage (?stage=extraction|validation|invoice) and status
  */
-reviewRouter.get("/", async (req: Request, res: Response): Promise<void> => {
+reviewRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.user!.tenantId;
   const { page, pageSize, stage, status } = req.query;
 
@@ -53,7 +54,7 @@ reviewRouter.get("/", async (req: Request, res: Response): Promise<void> => {
     data: formattedData,
     pagination: result.pagination
   });
-});
+}));
 
 /**
  * GET /reviews/:reviewId

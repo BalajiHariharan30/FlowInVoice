@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../middleware/error-handler.js";
 import { authenticate } from "../../auth/auth.middleware.js";
 import { InvoiceRepository, PurchaseOrderRepository } from "../../repositories/index.js";
 import { StorageService } from "../../storage/s3.service.js";
@@ -13,7 +14,7 @@ invoiceRouter.use(authenticate);
  * GET /invoices
  * List invoices with pagination and search
  */
-invoiceRouter.get("/", async (req: Request, res: Response): Promise<void> => {
+invoiceRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.user!.tenantId;
   const { page, pageSize, status, search, customerId } = req.query;
 
@@ -52,7 +53,7 @@ invoiceRouter.get("/", async (req: Request, res: Response): Promise<void> => {
     data: formattedData,
     pagination: result.pagination
   });
-});
+}));
 
 /**
  * GET /invoices/:invoiceId

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { asyncHandler } from "../middleware/error-handler.js";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { authenticate } from "../../auth/auth.middleware.js";
@@ -251,7 +252,7 @@ poRouter.get("/:poId/stream-graph", workflowRateLimiter, async (req: Request, re
  * GET /pos
  * List POs with pagination, filters, and search
  */
-poRouter.get("/", async (req: Request, res: Response): Promise<void> => {
+poRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.user!.tenantId;
   const { page, pageSize, status, search, customerId, dateFrom, dateTo } = req.query;
 
@@ -291,7 +292,7 @@ poRouter.get("/", async (req: Request, res: Response): Promise<void> => {
     data: formattedData,
     pagination: result.pagination
   });
-});
+}));
 
 /**
  * GET /pos/:poId

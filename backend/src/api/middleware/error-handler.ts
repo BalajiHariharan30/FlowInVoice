@@ -1,4 +1,16 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction, RequestHandler } from "express";
+
+/**
+ * Wraps an async route handler so any thrown error or rejected promise
+ * is forwarded to Express next(err) instead of crashing the process.
+ */
+export function asyncHandler(
+  fn: (req: Request, res: Response, next: NextFunction) => Promise<any>
+): RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
 import { v4 as uuidv4 } from "uuid";
 
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {
