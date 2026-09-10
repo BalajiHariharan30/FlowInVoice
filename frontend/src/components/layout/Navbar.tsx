@@ -109,13 +109,15 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCommandPalette }) => {
         {/* User Role Badge */}
         <div className="flex items-center space-x-2 pl-1 border-l border-[#1D2430]">
           <div className="text-right hidden md:block">
-            <div className="text-xs font-semibold text-white">{user?.name || "Administrator"}</div>
+            <div className="text-xs font-semibold text-white">
+              {user?.name && !user.name.includes("(") ? user.name : (user?.role === "FINANCE" ? "Finance" : user?.role === "REVIEWER" ? "Reviewer" : "Admin")}
+            </div>
             <div className="text-[10px] font-mono text-accent-secondary font-bold uppercase">
               {user?.role || "ADMIN"}
             </div>
           </div>
           <div className="w-7 h-7 rounded-md bg-accent-primary text-white flex items-center justify-center font-bold text-xs shadow-sm">
-            {user?.name ? user.name.slice(0, 1).toUpperCase() : "A"}
+            {(user?.role || "A").slice(0, 1).toUpperCase()}
           </div>
         </div>
       </div>

@@ -53,17 +53,17 @@ authRouter.post("/login", async (req: Request, res: Response): Promise<void> => 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
     let role: "ADMIN" | "FINANCE" | "REVIEWER" = "ADMIN";
-    let name = "Enterprise Administrator";
+    let name = "Admin";
 
     if (isAdminEmail) {
       role = "ADMIN";
-      name = "Balaji (Enterprise Administrator)";
+      name = "Admin";
     } else if (email.startsWith("finance")) {
       role = "FINANCE";
-      name = "Sarah Chen (Finance Lead)";
+      name = "Finance";
     } else if (email.startsWith("reviewer")) {
       role = "REVIEWER";
-      name = "David Kim (Compliance Reviewer)";
+      name = "Reviewer";
     }
 
     user = await UserRepository.create(tenantId, {
@@ -73,6 +73,19 @@ authRouter.post("/login", async (req: Request, res: Response): Promise<void> => 
       role,
       isActive: true
     });
+  }
+
+  // Ensure demo accounts always have clean role names without personal names
+  if (user && isDemoEmail) {
+    let cleanName = "Admin";
+    if (user.role === "FINANCE" || email.startsWith("finance")) cleanName = "Finance";
+    else if (user.role === "REVIEWER" || email.startsWith("reviewer")) cleanName = "Reviewer";
+    else cleanName = "Admin";
+
+    if (user.name !== cleanName) {
+      user.name = cleanName;
+      await User.updateOne({ _id: user._id }, { name: cleanName });
+    }
   }
 
   if (user && isAdminEmail && !user.passwordHash && password === "password123") {
@@ -286,7 +299,7 @@ authRouter.post("/google", async (req: Request, res: Response): Promise<void> =>
     if (!user) {
       user = await UserRepository.create(tenantId, {
         email,
-        name: isAdmin && !payload.name ? "Balaji (Enterprise Administrator)" : name,
+        name: isAdmin && !payload.name ? "Admin" : name,
         googleId,
         role: assignedRole,
         isActive: true

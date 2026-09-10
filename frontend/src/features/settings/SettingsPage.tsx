@@ -40,10 +40,9 @@ export const SettingsPage: React.FC = () => {
 
   // Team users list
   const [teamMembers, setTeamMembers] = useState([
-    { id: "usr_1", name: "Alex Sterling", email: "alex.sterling@acme.corp", role: "ADMIN" as Role, status: "Active" },
-    { id: "usr_2", name: "Sarah Chen", email: "sarah.chen@acme.corp", role: "FINANCE" as Role, status: "Active" },
-    { id: "usr_3", name: "David Kim", email: "david.kim@acme.corp", role: "REVIEWER" as Role, status: "Active" },
-    { id: "usr_4", name: "Elena Rostova", email: "elena.rostova@acme.corp", role: "OPERATIONS" as Role, status: "Active" }
+    { id: "usr_1", name: "Admin", email: "admin@flowinvoice.ai", role: "ADMIN" as Role, status: "Active" },
+    { id: "usr_2", name: "Finance", email: "finance@flowinvoice.ai", role: "FINANCE" as Role, status: "Active" },
+    { id: "usr_3", name: "Reviewer", email: "reviewer@flowinvoice.ai", role: "REVIEWER" as Role, status: "Active" }
   ]);
 
   const [showInviteModal, setShowInviteModal] = useState(false);
