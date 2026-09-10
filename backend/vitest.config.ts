@@ -5,6 +5,9 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    testTimeout: 20000
+    testTimeout: 20000,
+    env: {
+      DOCUMENT_AI_PROVIDER: "mock"
+    }
   }
 });

@@ -298,40 +298,65 @@ Rules:
 2. The confidence score (0.0 to 1.0) must reflect actual document clarity and text legibility.
 3. If specific fields are omitted, supply standard defaults (e.g. currency: "INR", paymentTerms: "NET_30").`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const candidateModels = [
+      process.env.GEMINI_MODEL,
+      "gemini-flash-lite-latest",
+      "gemini-3.5-flash",
+      "gemini-3.8-flash",
+      "gemini-flash-latest"
+    ].filter(Boolean) as string[];
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
+    let lastError: any = null;
+    let json: any = null;
+
+    for (const model of candidateModels) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
               {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: base64Data
-                }
-              },
-              {
-                text: extractionPrompt
+                parts: [
+                  {
+                    inline_data: {
+                      mime_type: mimeType,
+                      data: base64Data
+                    }
+                  },
+                  {
+                    text: extractionPrompt
+                  }
+                ]
               }
-            ]
-          }
-        ],
-        generationConfig: {
-          response_mime_type: "application/json",
-          temperature: 0.0
-        }
-      })
-    });
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+              temperature: 0.0
+            }
+          })
+        });
 
-    if (!res.ok) {
-      const errBody = await res.text();
-      throw new Error(`Gemini Vision API error (HTTP ${res.status}): ${errBody}`);
+        if (!res.ok) {
+          const errBody = await res.text();
+          logger.warn({ model, status: res.status, err: errBody }, "Gemini model attempt returned non-200, trying next candidate");
+          lastError = new Error(`Gemini Vision API error (${model}, HTTP ${res.status}): ${errBody}`);
+          continue;
+        }
+
+        json = await res.json();
+        break;
+      } catch (err: any) {
+        logger.warn({ model, err: err.message }, "Gemini model request exception, trying next candidate");
+        lastError = err;
+      }
     }
 
-    const json = await res.json();
+    if (!json) {
+      throw lastError || new Error("All Gemini Vision models failed to respond.");
+    }
+
     this.rawResult = json;
 
     const candidateText = json.candidates?.[0]?.content?.parts?.[0]?.text;
