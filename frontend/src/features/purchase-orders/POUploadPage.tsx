@@ -82,7 +82,7 @@ export const POUploadPage: React.FC = () => {
           setUploadStatus("processing");
           setTimeout(() => {
             const { poId } = response.data;
-            navigate(`/pos/${poId}`);
+            navigate(`/pos/${poId}?autorun=true`);
           }, 800);
         }, 600);
       }

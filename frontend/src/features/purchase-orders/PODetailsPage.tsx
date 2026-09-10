@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
 import { env } from "../../lib/env";
@@ -193,6 +193,17 @@ export const PODetailsPage: React.FC = () => {
       setStreamingActiveStep(null);
     }
   };
+
+  const [searchParams] = useSearchParams();
+  const shouldAutoRun = searchParams.get("autorun") === "true";
+  const autoRunTriggeredRef = React.useRef(false);
+
+  React.useEffect(() => {
+    if (po && (shouldAutoRun || po.status === "PROCESSING" || po.status === "UPLOADED") && !autoRunTriggeredRef.current && !isStreaming) {
+      autoRunTriggeredRef.current = true;
+      runLangGraphWithTelemetry();
+    }
+  }, [po, shouldAutoRun]);
 
   const runLangGraphMutation = useMutation({
     mutationFn: async () => {
