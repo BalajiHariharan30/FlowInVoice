@@ -15,6 +15,8 @@ import { userRouter } from "./api/routes/user.routes.js";
 import { auditRouter } from "./api/routes/audit.routes.js";
 import { storageRouter } from "./api/routes/storage.routes.js";
 import openApiSpec from "./api/openapi.json";
+import { QueueManager } from "./workers/queue.js";
+import { isDbConnected } from "./repositories/base.js";
 
 export function createApp(): Express {
   const app = express();
@@ -59,11 +61,40 @@ export function createApp(): Express {
   app.use(express.urlencoded({ extended: true, limit: "20mb" }));
   app.use(requestIdMiddleware);
 
-  // Health check with deployment version tracking
+  // Health check with deployment version tracking & service status
   app.get("/health", (req: Request, res: Response) => {
+    const queueHealth = QueueManager.getHealthStatus();
+    const dbConnected = isDbConnected();
+
+    // If REQUIRE_REDIS is true and Redis is not connected, report 503 Unhealthy
+    if (env.REQUIRE_REDIS && queueHealth.status !== "connected") {
+      return res.status(503).json({
+        status: "unhealthy",
+        version: "1.0.5",
+        services: {
+          database: { status: dbConnected ? "connected" : "disconnected", provider: "mongodb" },
+          redis: queueHealth
+        },
+        error: `Redis is unreachable (${queueHealth.lastError || "disconnected"}). REQUIRE_REDIS=true is enforced.`,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const overallStatus = queueHealth.status === "connected" && dbConnected ? "healthy" : "degraded";
+
     res.status(200).json({
-      status: "healthy",
-      version: "1.0.4",
+      status: overallStatus,
+      version: "1.0.5",
+      services: {
+        database: { status: dbConnected ? "connected" : "disconnected", provider: "mongodb" },
+        redis: queueHealth
+      },
+      providers: {
+        documentAi: env.DOCUMENT_AI_PROVIDER,
+        llm: env.LLM_PROVIDER,
+        storage: env.STORAGE_PROVIDER,
+        erp: process.env.ERP_PROVIDER || "sandbox"
+      },
       timestamp: new Date().toISOString()
     });
   });
