@@ -68,13 +68,23 @@ export class MockOCRProvider implements DocumentExtractor {
     const isLowConfidence = fileName.includes("low_confidence") || fileName.includes("blurry");
     const isDuplicate = fileName.includes("duplicate");
 
-    // Generate unique PO number from file fingerprint + current timestamp tail
-    const poNumSuffix = isDuplicate ? "DUP-9999" : `${seed.toString().slice(0, 3)}-${Date.now().toString().slice(-5)}`;
-    const poNumber = `PO-${poNumSuffix}`;
+    // Inspect buffer for uncompressed text (real PO numbers or GSTINs embedded in PDF/file)
+    const rawBufferStr = input.buffer.toString("latin1");
+    const bufferGstMatch = rawBufferStr.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}\b/);
+    const bufferPoMatch = rawBufferStr.match(/\b(?:PO|PURCHASE\s*ORDER)[#:\s-]*([A-Z0-9_-]{4,20})\b/i);
 
-    // Pick customer from a realistic enterprise roster, deterministically from seed
+    // Generate unique PO number from buffer match OR file fingerprint + timestamp tail
+    let poNumber: string;
+    if (isDuplicate) {
+      poNumber = "PO-DUP-9999";
+    } else if (bufferPoMatch && bufferPoMatch[1] && !bufferPoMatch[1].startsWith("PENDING")) {
+      poNumber = bufferPoMatch[1].startsWith("PO-") ? bufferPoMatch[1] : `PO-${bufferPoMatch[1]}`;
+    } else {
+      poNumber = `PO-${seed.toString().slice(0, 3)}-${Date.now().toString().slice(-5)}`;
+    }
+
+    // Enterprise customer roster
     const CUSTOMERS = [
-      { name: "Acme Global Industries",         gst: "27AABCU9603R1ZM", state: "27" },
       { name: "Tata Advanced Systems Ltd",       gst: "27AATCS1234M1Z5", state: "27" },
       { name: "Infosys BPM Limited",             gst: "29AABCI1234K1ZP", state: "29" },
       { name: "Mahindra Logistics Pvt Ltd",      gst: "27AACCM9876L1ZQ", state: "27" },
@@ -83,9 +93,26 @@ export class MockOCRProvider implements DocumentExtractor {
       { name: "Larsen & Toubro Technology",      gst: "27AAACL0870M1ZS", state: "27" },
       { name: "HCL Technologies Ltd",            gst: "09AAACH8345Q1ZH", state: "09" },
       { name: "Reliance Jio Infocomm Ltd",       gst: "27AACCR4849R1ZB", state: "27" },
-      { name: "Sun Pharmaceutical Industries",   gst: "24AABCS0762M1ZN", state: "24" }
+      { name: "Sun Pharmaceutical Industries",   gst: "24AABCS0762M1ZN", state: "24" },
+      { name: "Acme Global Industries",         gst: "27AABCU9603R1ZM", state: "27" }
     ];
-    const customer = CUSTOMERS[rand(CUSTOMERS.length)];
+
+    // Priority 1: Match customer from filename (e.g. "tata", "wipro", "infosys")
+    let customer = CUSTOMERS.find((c) => {
+      const keyword = c.name.split(" ")[0].toLowerCase();
+      return fileName.includes(keyword);
+    });
+
+    // Priority 2: Match customer from buffer GSTIN if recognized
+    if (!customer && bufferGstMatch) {
+      customer = CUSTOMERS.find((c) => c.gst === bufferGstMatch[0]);
+    }
+
+    // Priority 3: Fallback to deterministic seed
+    if (!customer) {
+      customer = CUSTOMERS[rand(CUSTOMERS.length)];
+    }
+
 
     // Pick 2–4 realistic product line items from a catalog seeded by file
     const CATALOG = [

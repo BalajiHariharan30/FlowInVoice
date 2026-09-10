@@ -63,10 +63,11 @@ export function createApp(): Express {
   app.get("/health", (req: Request, res: Response) => {
     res.status(200).json({
       status: "healthy",
-      version: "1.0.2",
+      version: "1.0.3",
       timestamp: new Date().toISOString()
     });
   });
+
 
   // OpenAPI spec documentation
   app.get("/api/docs/openapi.json", (req: Request, res: Response) => {
