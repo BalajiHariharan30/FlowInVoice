@@ -17,52 +17,52 @@ export function createExtractionNode(tenantId: string) {
     logger.info({ tenantId, poId: state.poId }, "ExtractionAgent: Starting extraction node");
     const startTime = Date.now();
 
+    const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
+    if (!po) {
+      throw new Error(`PO not found for ID: ${state.poId}`);
+    }
+
+    await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "PROCESSING");
+
+    // If human reviewer verified/corrected extraction, preserve verified data
+    if (
+      po.lineItems &&
+      po.lineItems.length > 0 &&
+      po.extractionConfidence === 1.0 &&
+      po.poNumber &&
+      !po.poNumber.startsWith("PENDING-")
+    ) {
+      logger.info({ tenantId, poId: state.poId }, "ExtractionAgent: Human-verified extraction detected, preserving corrected line items");
+      const humanVerified: ExtractedPOData = {
+        poNumber: po.poNumber,
+        customerName: po.customerName,
+        gstNumber: po.gstNumber || "",
+        currency: po.currency || "USD",
+        paymentTerms: po.paymentTerms || "NET_30",
+        issueDate: po.issueDate ? new Date(po.issueDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+        subtotal: po.subtotal || 0,
+        tax: po.tax || 0,
+        discount: po.discount || 0,
+        totalAmount: po.totalAmount || 0,
+        confidence: 1.0,
+        lineItems: po.lineItems
+      };
+      return {
+        currentStep: "extraction",
+        status: "EXTRACTED",
+        extractedData: humanVerified
+      };
+    }
+
+    // Retrieve buffer from S3 (or mock storage)
+    const fileBuffer = await StorageService.getFileBuffer(po.s3Key);
+    if (!fileBuffer && env.DOCUMENT_AI_PROVIDER !== "mock") {
+      throw new Error(
+        `Document file buffer is null for PO ${state.poId} (key: ${po.s3Key}). Real document extraction cannot proceed without the uploaded file bytes.`
+      );
+    }
+
     try {
-      const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
-      if (!po) {
-        throw new Error(`PO not found for ID: ${state.poId}`);
-      }
-
-      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "PROCESSING");
-
-      // If human reviewer verified/corrected extraction, preserve verified data
-      if (
-        po.lineItems &&
-        po.lineItems.length > 0 &&
-        po.extractionConfidence === 1.0 &&
-        po.poNumber &&
-        !po.poNumber.startsWith("PENDING-")
-      ) {
-        logger.info({ tenantId, poId: state.poId }, "ExtractionAgent: Human-verified extraction detected, preserving corrected line items");
-        const humanVerified: ExtractedPOData = {
-          poNumber: po.poNumber,
-          customerName: po.customerName,
-          gstNumber: po.gstNumber || "",
-          currency: po.currency || "USD",
-          paymentTerms: po.paymentTerms || "NET_30",
-          issueDate: po.issueDate ? new Date(po.issueDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
-          subtotal: po.subtotal || 0,
-          tax: po.tax || 0,
-          discount: po.discount || 0,
-          totalAmount: po.totalAmount || 0,
-          confidence: 1.0,
-          lineItems: po.lineItems
-        };
-        return {
-          currentStep: "extraction",
-          status: "EXTRACTED",
-          extractedData: humanVerified
-        };
-      }
-
-      // Retrieve buffer from S3 (or mock storage)
-      const fileBuffer = await StorageService.getFileBuffer(po.s3Key);
-      if (!fileBuffer && env.DOCUMENT_AI_PROVIDER !== "mock") {
-        throw new Error(
-          `Document file buffer is null for PO ${state.poId} (key: ${po.s3Key}). Real document extraction cannot proceed without the uploaded file bytes.`
-        );
-      }
-
       const extractor = DocumentExtractorFactory.getExtractor();
 
       const extracted = await extractor.extract({
@@ -137,6 +137,14 @@ export function createExtractionNode(tenantId: string) {
         currentStep: "extraction"
       };
     } catch (err: any) {
+      // Re-throw unrecoverable data/programming errors (e.g. PO or file buffer not found)
+      if (
+        err.message?.includes("PO not found") ||
+        err.message?.includes("Document file buffer is null")
+      ) {
+        throw err;
+      }
+
       logger.error({ err, tenantId, poId: state.poId }, "ExtractionAgent failed");
       await AuditRepository.create(tenantId, {
         agentName: "POExtractionAgent",
@@ -147,7 +155,13 @@ export function createExtractionNode(tenantId: string) {
         summary: `Document extraction failed: ${err.message}`
       });
 
-      throw err;
+      const errorMessage = err.message || "Document extraction failed due to a technical error";
+      return {
+        technicalError: errorMessage,
+        failureReason: errorMessage,
+        validationErrors: [errorMessage],
+        currentStep: "extraction"
+      };
     }
   };
 }

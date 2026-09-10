@@ -11,9 +11,12 @@ import { env } from "../src/config/env.js";
 import { createExtractionNode } from "../src/ai/workflow/extraction/extraction.agent.js";
 import {
   PurchaseOrderRepository,
+  AuditRepository,
+  ReviewRepository,
   clearTestRepositories
 } from "../src/repositories/index.js";
 import { StorageService } from "../src/storage/s3.service.js";
+import { runOrchestrationWorkflow } from "../src/ai/workflow/graph.js";
 
 describe("Real Document Extraction & OCR Provider (§Fix Spec)", () => {
   const tenantId = "tenant_ocr_test";
@@ -229,5 +232,91 @@ describe("Real Document Extraction & OCR Provider (§Fix Spec)", () => {
         contentType: "application/pdf"
       })
     ).rejects.toThrow(/AWS_ACCESS_KEY \/ AWS_SECRET_KEY is not configured/i);
+  });
+
+  it("7. extraction.agent handles technical extraction errors gracefully without throwing, records EXTRACTION_FAILED audit, and sets technicalError", async () => {
+    const upload = await StorageService.uploadFile(
+      tenantId,
+      "pos",
+      "po_corrupt_test",
+      "Corrupt_Order.pdf",
+      Buffer.from("%PDF-corrupt-data"),
+      "application/pdf"
+    );
+
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PENDING-CORRUPT",
+      customerName: "Pending",
+      gstNumber: "",
+      status: "PROCESSING",
+      s3Key: upload.s3Key,
+      documentName: "Corrupt_Order.pdf",
+      contentType: "application/pdf",
+      lineItems: []
+    });
+
+    vi.spyOn(DocumentExtractorFactory, "getExtractor").mockReturnValue({
+      extract: vi.fn().mockRejectedValue(new Error("OCR timeout: vision model took longer than 30000ms"))
+    } as any);
+
+    const extractionNode = createExtractionNode(tenantId);
+    const result = await extractionNode({
+      poId: po._id.toString(),
+      workflowId: "wf_corrupt_test",
+      currentStep: "intake",
+      status: "PROCESSING"
+    } as any);
+
+    expect(result.technicalError).toContain("OCR timeout");
+    expect(result.currentStep).toBe("extraction");
+    expect(result.failureReason).toContain("OCR timeout");
+    expect(result.validationErrors).toEqual([expect.stringContaining("OCR timeout")]);
+
+    const auditLogs = await AuditRepository.findByEntityId(tenantId, po._id.toString());
+    const failedLog = auditLogs.find((l) => l.action === "EXTRACTION_FAILED");
+    expect(failedLog).toBeDefined();
+    expect(failedLog?.status).toBe("FAILURE");
+  });
+
+  it("8. runOrchestrationWorkflow routes technical extraction error to Review Center instead of failing outright", async () => {
+    const upload = await StorageService.uploadFile(
+      tenantId,
+      "pos",
+      "po_corrupt_wf",
+      "Unreadable_PO.pdf",
+      Buffer.from("%PDF-unreadable"),
+      "application/pdf"
+    );
+
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PENDING-UNREADABLE",
+      customerName: "Pending",
+      gstNumber: "",
+      status: "PROCESSING",
+      s3Key: upload.s3Key,
+      documentName: "Unreadable_PO.pdf",
+      contentType: "application/pdf",
+      lineItems: []
+    });
+
+    vi.spyOn(DocumentExtractorFactory, "getExtractor").mockReturnValue({
+      extract: vi.fn().mockRejectedValue(new Error("Model parsing error: unsupported font encoding"))
+    } as any);
+
+    const result = await runOrchestrationWorkflow(tenantId, po._id.toString());
+
+    expect(result.status).toBe("HUMAN_REVIEW");
+    expect(result.isBusinessException).toBe(true);
+    expect(result.reviewId).toBeDefined();
+
+    // Verify Review record created in ReviewRepository with extraction stage
+    const review = await ReviewRepository.findById(tenantId, result.reviewId!);
+    expect(review).toBeDefined();
+    expect(review?.stage).toBe("extraction");
+    expect(review?.reason).toContain("unsupported font encoding");
+
+    // Verify PO status updated to HUMAN_REVIEW
+    const updatedPo = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
+    expect(updatedPo?.status).toBe("HUMAN_REVIEW");
   });
 });
