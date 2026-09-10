@@ -42,9 +42,11 @@ const envSchema = z.object({
   MISTRAL_API_KEY: z.string().optional().default(""),
   GROQ_API_KEY: z.string().optional().default(""),
   OPENROUTER_API_KEY: z.string().optional().default(""),
+  GEMINI_API_KEY: z.string().optional().default(""),
 
-  DOCUMENT_AI_PROVIDER: z.enum(["mistral_ocr", "vision_fallback", "mock"]).default("mock")
+  DOCUMENT_AI_PROVIDER: z.enum(["mistral_ocr", "vision_fallback", "mock"]).default("vision_fallback")
 });
+
 
 export type EnvConfig = z.infer<typeof envSchema>;
 

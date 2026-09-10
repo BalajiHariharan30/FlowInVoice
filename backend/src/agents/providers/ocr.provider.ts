@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { logger } from "../../utils/logger.js";
+import { env } from "../../config/env.js";
 
 export const PurchaseOrderExtractionSchema = z.object({
   poNumber: z.string(),
@@ -38,7 +39,9 @@ export interface DocumentInput {
 
 export interface DocumentExtractor {
   extract(input: DocumentInput): Promise<ExtractedPOData>;
+  getRawResult?(): any;
 }
+
 
 export class MockOCRProvider implements DocumentExtractor {
   async extract(input: DocumentInput): Promise<ExtractedPOData> {
@@ -232,10 +235,218 @@ export class MockOCRProvider implements DocumentExtractor {
       confidence: isLowConfidence ? 0.62 : 0.93 + (seed % 7) / 100
     };
   }
+
+  getRawResult(): any {
+    return { mode: "mock", seeded: true };
+  }
+}
+
+/**
+ * Real Multimodal Document Extractor using Google Gemini Vision (gemini-1.5-flash / gemini-1.5-pro).
+ * Accepts raw PDF/image buffer, passes inline document bytes, and parses real document data.
+ */
+export class GeminiVisionProvider implements DocumentExtractor {
+  private rawResult: any = null;
+
+  getRawResult(): any {
+    return this.rawResult;
+  }
+
+  async extract(input: DocumentInput): Promise<ExtractedPOData> {
+    const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "DOCUMENT_AI_PROVIDER is set to 'vision_fallback' (Gemini Vision), but GEMINI_API_KEY is not configured in the environment. Real OCR extraction cannot proceed without an API key."
+      );
+    }
+
+    logger.info({ fileName: input.fileName, contentType: input.contentType }, "Running real Multimodal OCR via Gemini Vision");
+
+    const mimeType = input.contentType || "application/pdf";
+    const base64Data = input.buffer.toString("base64");
+
+    const extractionPrompt = `You are a high-precision document extraction engine for accounts payable.
+Extract all purchase order information from this document with 100% accuracy.
+You must output valid JSON matching this exact structure:
+{
+  "poNumber": "string (PO number or Order number from the document)",
+  "customerName": "string (The buyer / issuing company)",
+  "gstNumber": "string (15-character GSTIN if in India, or empty string)",
+  "issueDate": "YYYY-MM-DD",
+  "deliveryDate": "YYYY-MM-DD (if present)",
+  "currency": "INR (or USD/EUR/GBP as indicated)",
+  "paymentTerms": "NET_30 (or whatever terms are stated)",
+  "lineItems": [
+    {
+      "lineNumber": 1,
+      "productCode": "SKU or item number",
+      "description": "Full description of item",
+      "quantity": 1,
+      "unitPrice": 100.0,
+      "lineTotal": 100.0,
+      "taxRate": 18
+    }
+  ],
+  "subtotal": 100.0,
+  "tax": 18.0,
+  "discount": 0.0,
+  "totalAmount": 118.0,
+  "confidence": 0.98
+}
+Rules:
+1. Every numeric value must be a number, not a string with currency signs.
+2. The confidence score (0.0 to 1.0) must reflect actual document clarity and text legibility.
+3. If specific fields are omitted, supply standard defaults (e.g. currency: "INR", paymentTerms: "NET_30").`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                inline_data: {
+                  mime_type: mimeType,
+                  data: base64Data
+                }
+              },
+              {
+                text: extractionPrompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          response_mime_type: "application/json",
+          temperature: 0.0
+        }
+      })
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Gemini Vision API error (HTTP ${res.status}): ${errBody}`);
+    }
+
+    const json = await res.json();
+    this.rawResult = json;
+
+    const candidateText = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!candidateText) {
+      throw new Error("Gemini Vision returned an empty extraction result.");
+    }
+
+    const parsed = JSON.parse(candidateText);
+    return PurchaseOrderExtractionSchema.parse(parsed);
+  }
+}
+
+/**
+ * Real Mistral OCR / Vision Extractor (pixtral-12b / mistral-ocr).
+ */
+export class MistralOCRProvider implements DocumentExtractor {
+  private rawResult: any = null;
+
+  getRawResult(): any {
+    return this.rawResult;
+  }
+
+  async extract(input: DocumentInput): Promise<ExtractedPOData> {
+    const apiKey = env.MISTRAL_API_KEY || process.env.MISTRAL_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "DOCUMENT_AI_PROVIDER is set to 'mistral_ocr', but MISTRAL_API_KEY is not configured in the environment. Real OCR extraction cannot proceed without an API key."
+      );
+    }
+
+    logger.info({ fileName: input.fileName }, "Running real OCR via Mistral AI");
+
+    const mimeType = input.contentType || "application/pdf";
+    const base64Data = input.buffer.toString("base64");
+
+    const extractionPrompt = `Extract all purchase order information from this document into valid JSON:
+{
+  "poNumber": "string",
+  "customerName": "string",
+  "gstNumber": "string",
+  "issueDate": "YYYY-MM-DD",
+  "deliveryDate": "YYYY-MM-DD",
+  "currency": "INR",
+  "paymentTerms": "NET_30",
+  "lineItems": [
+    {
+      "lineNumber": 1,
+      "productCode": "string",
+      "description": "string",
+      "quantity": 1,
+      "unitPrice": 100.0,
+      "lineTotal": 100.0,
+      "taxRate": 18
+    }
+  ],
+  "subtotal": 100.0,
+  "tax": 18.0,
+  "discount": 0.0,
+  "totalAmount": 118.0,
+  "confidence": 0.98
+}`;
+
+    const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "pixtral-12b-2409",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: extractionPrompt },
+              { type: "image_url", image_url: `data:${mimeType};base64,${base64Data}` }
+            ]
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.0
+      })
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Mistral OCR API error (HTTP ${res.status}): ${errBody}`);
+    }
+
+    const json = await res.json();
+    this.rawResult = json;
+
+    const contentStr = json.choices?.[0]?.message?.content;
+    if (!contentStr) {
+      throw new Error("Mistral OCR returned an empty response.");
+    }
+
+    const parsed = JSON.parse(contentStr);
+    return PurchaseOrderExtractionSchema.parse(parsed);
+  }
 }
 
 export class DocumentExtractorFactory {
   static getExtractor(): DocumentExtractor {
-    return new MockOCRProvider();
+    const provider = env.DOCUMENT_AI_PROVIDER;
+    switch (provider) {
+      case "mistral_ocr":
+        return new MistralOCRProvider();
+      case "vision_fallback":
+        return new GeminiVisionProvider();
+      case "mock":
+        return new MockOCRProvider();
+      default:
+        throw new Error(`Unknown DOCUMENT_AI_PROVIDER: ${provider}`);
+    }
   }
 }
+

@@ -3,6 +3,8 @@ import { DocumentExtractorFactory } from "./providers/ocr.provider.js";
 import { AgentTools } from "../tools/index.js";
 import { MoneyUtil } from "../utils/money.js";
 import { logger } from "../utils/logger.js";
+import { env } from "../config/env.js";
+
 import {
   PurchaseOrderRepository,
   InvoiceRepository,
@@ -111,6 +113,9 @@ export class POProcessingWorkflow {
     if (!po) return;
 
     const fileBuffer = await StorageService.getFileBuffer(po.s3Key);
+    if (!fileBuffer && env.DOCUMENT_AI_PROVIDER !== "mock") {
+      throw new Error(`File buffer is null for PO ${poId} (key: ${po.s3Key}). Real document extraction cannot proceed without uploaded file bytes.`);
+    }
     const extractor = DocumentExtractorFactory.getExtractor();
 
     const startTime = Date.now();
@@ -120,6 +125,7 @@ export class POProcessingWorkflow {
       contentType: po.contentType
     });
     const latency = Date.now() - startTime;
+
 
     // Check customer existence
     let customer = await AgentTools.getCustomer(tenantId, extracted.customerName);

@@ -6,6 +6,7 @@ import {
   AuditRepository
 } from "../../../repositories/index.js";
 import { logger } from "../../../utils/logger.js";
+import { env } from "../../../config/env.js";
 
 /**
  * Agent 1: Extraction Agent
@@ -56,6 +57,12 @@ export function createExtractionNode(tenantId: string) {
 
       // Retrieve buffer from S3 (or mock storage)
       const fileBuffer = await StorageService.getFileBuffer(po.s3Key);
+      if (!fileBuffer && env.DOCUMENT_AI_PROVIDER !== "mock") {
+        throw new Error(
+          `Document file buffer is null for PO ${state.poId} (key: ${po.s3Key}). Real document extraction cannot proceed without the uploaded file bytes.`
+        );
+      }
+
       const extractor = DocumentExtractorFactory.getExtractor();
 
       const extracted = await extractor.extract({
@@ -65,6 +72,26 @@ export function createExtractionNode(tenantId: string) {
       });
 
       const latency = Date.now() - startTime;
+
+      // Persist raw OCR response for auditability if available
+      let ocrResultKey: string | undefined;
+      const rawResult = extractor.getRawResult?.();
+      if (rawResult && rawResult.mode !== "mock") {
+        try {
+          const rawKey = `tenants/${tenantId}/pos/${state.poId}/raw_ocr_response.json`;
+          await StorageService.uploadFile(
+            tenantId,
+            "pos",
+            state.poId,
+            "raw_ocr_response.json",
+            Buffer.from(JSON.stringify(rawResult, null, 2)),
+            "application/json"
+          );
+          ocrResultKey = rawKey;
+        } catch (e: any) {
+          logger.warn({ err: e.message }, "Could not persist raw OCR response to storage");
+        }
+      }
 
       // Update PO in repository
       await PurchaseOrderRepository.updateExtraction(tenantId, state.poId, {
@@ -78,6 +105,7 @@ export function createExtractionNode(tenantId: string) {
         discount: extracted.discount,
         totalAmount: extracted.totalAmount,
         extractionConfidence: extracted.confidence,
+        ocrResultKey: ocrResultKey || po.ocrResultKey,
         lineItems: extracted.lineItems.map((li) => ({
           lineNumber: li.lineNumber,
           productCode: li.productCode,
@@ -90,6 +118,7 @@ export function createExtractionNode(tenantId: string) {
         })),
         status: "EXTRACTED"
       });
+
 
       await AuditRepository.create(tenantId, {
         agentName: "POExtractionAgent",

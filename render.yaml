@@ -15,7 +15,12 @@ services:
       - key: DEPLOY_VERSION
         value: "1.0.3"
       - key: DOCUMENT_AI_PROVIDER
-        value: mock
+        value: vision_fallback
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+
 
       - key: PORT
         value: 10000
