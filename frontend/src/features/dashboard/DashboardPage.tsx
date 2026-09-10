@@ -6,6 +6,7 @@ import { DashboardSummary, DashboardAnalytics } from "../../types";
 import { formatCurrency, formatPercent } from "../../lib/format";
 import { LoadingSkeleton, ErrorBanner } from "../../components/feedback";
 import { useAuth } from "../../contexts/AuthContext";
+import { LiveAgentWorkflowMonitor } from "./components/LiveAgentWorkflowMonitor";
 import {
   FileText,
   CheckCircle2,
@@ -175,17 +176,6 @@ export const DashboardPage: React.FC = () => {
     }
   ];
 
-  // AI Workflow Nodes (§10)
-  const workflowNodes = [
-    { name: "PO Upload", agent: "Intake Service", status: "completed", latency: "240ms", icon: UploadCloud },
-    { name: "Extraction", agent: "OCR / Vision Agent", status: "completed", latency: "1.4s", icon: Zap },
-    { name: "Validation", agent: "Deterministic Validator", status: "completed", latency: "80ms", icon: CheckCircle2 },
-    { name: "RAG Verification", agent: "Contract RAG Agent", status: "processing", latency: "650ms", icon: ShieldCheck },
-    { name: "Compliance", agent: "Tax & GSTIN Agent", status: "queued", latency: "—", icon: Activity },
-    { name: "Invoice Generation", agent: "Billing Agent", status: "queued", latency: "—", icon: Receipt },
-    { name: "Invoice Validation", agent: "Cross-Audit Agent", status: "queued", latency: "—", icon: CheckCircle2 },
-    { name: "Completed", agent: "Final Output", status: "queued", latency: "—", icon: Check }
-  ];
 
   if ((summaryError && !summary) || (analyticsError && !analytics)) {
     return (
@@ -399,83 +389,8 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* AI Processing Monitor Workflow (§10) */}
-      <div className="dark-panel p-5 bg-dark-secondary text-slate-300">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <div className="flex items-center space-x-2">
-              <Sparkles className="w-4 h-4 text-accent-secondary" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
-                Autonomous Agent Workflow Monitor
-              </h3>
-            </div>
-            <p className="text-[11px] text-workspace-muted mt-0.5">
-              Live deterministic execution tracing across LangGraph pipeline nodes
-            </p>
-          </div>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-dark-elevated border border-dark-border text-slate-400">
-            Avg Cycle: 4.2s
-          </span>
-        </div>
-
-        {/* Horizontal Visual Workflow Nodes */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          {workflowNodes.map((node, index) => {
-            const Icon = node.icon;
-            const isCompleted = node.status === "completed";
-            const isProcessing = node.status === "processing";
-
-            return (
-              <div
-                key={node.name}
-                className={`p-3 rounded-lg border flex flex-col justify-between text-xs transition ${
-                  isProcessing
-                    ? "bg-accent-primary/10 border-accent-secondary text-white ring-1 ring-accent-secondary/50"
-                    : isCompleted
-                    ? "bg-dark-elevated/80 border-dark-border text-slate-200"
-                    : "bg-dark-primary/60 border-dark-border/40 text-slate-500"
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] font-mono font-bold text-workspace-muted">
-                      0{index + 1}
-                    </span>
-                    <Icon
-                      className={`w-3.5 h-3.5 ${
-                        isProcessing
-                          ? "text-accent-secondary animate-spin"
-                          : isCompleted
-                          ? "text-semantic-success"
-                          : "text-slate-600"
-                      }`}
-                    />
-                  </div>
-                  <div className="font-semibold text-xs leading-tight">{node.name}</div>
-                  <div className="text-[10px] text-workspace-muted font-mono truncate mt-0.5">
-                    {node.agent}
-                  </div>
-                </div>
-
-                <div className="mt-3 pt-2 border-t border-dark-border/40 flex items-center justify-between text-[10px] font-mono">
-                  <span
-                    className={`uppercase font-bold ${
-                      isProcessing
-                        ? "text-accent-secondary"
-                        : isCompleted
-                        ? "text-semantic-success"
-                        : "text-slate-600"
-                    }`}
-                  >
-                    {node.status}
-                  </span>
-                  <span>{node.latency}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Autonomous Agent Workflow Monitor (Live Interactive) */}
+      <LiveAgentWorkflowMonitor />
 
       {/* Analytics Section (§11) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
