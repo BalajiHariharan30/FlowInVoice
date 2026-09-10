@@ -20,7 +20,10 @@ import {
   Coins,
   FileCheck,
   Layers,
-  ArrowRight
+  ArrowRight,
+  ArrowLeftRight,
+  Repeat,
+  SlidersHorizontal
 } from "lucide-react";
 import { apiClient } from "../../../lib/axios";
 import { formatCurrency } from "../../../lib/format";
@@ -129,6 +132,10 @@ interface LogEntry {
 
 export const LiveAgentWorkflowMonitor: React.FC = () => {
   const queryClient = useQueryClient();
+  const [availablePOs, setAvailablePOs] = useState<any[]>([]);
+  const [selectedPoId, setSelectedPoId] = useState<string>("auto");
+  const [isLooping, setIsLooping] = useState<boolean>(false);
+  const [currencyMode, setCurrencyMode] = useState<"INR" | "USD">("INR");
   const [activeStepIndex, setActiveStepIndex] = useState<number>(1);
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set([0]));
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
@@ -161,6 +168,18 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
   const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
   const tickTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Currency format helper
+  const currencyFormat = useCallback(
+    (amount: number) => {
+      if (currencyMode === "USD") {
+        const usd = amount / 85;
+        return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(usd);
+      }
+      return formatCurrency(amount);
+    },
+    [currencyMode]
+  );
+
   // Compute live cumulative usage metrics
   const cumulativeUsage = useMemo(() => {
     let inputTokens = 0;
@@ -181,26 +200,38 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
     };
   }, [activeStepIndex]);
 
-  // Fetch the latest real PO from the backend on load
+  const computeCostFormatted = useCallback(() => {
+    if (currencyMode === "USD") {
+      const usd = cumulativeUsage.totalCostInr / 85;
+      return `$${usd.toFixed(4)}`;
+    }
+    return `₹${cumulativeUsage.totalCostInr.toFixed(2)}`;
+  }, [currencyMode, cumulativeUsage.totalCostInr]);
+
+  // Fetch real POs from backend on load
   useEffect(() => {
     let isSubscribed = true;
 
     const fetchLatestPO = async () => {
       try {
-        const res = await apiClient.get("/pos?pageSize=10");
+        const res = await apiClient.get("/pos?pageSize=25");
         const list = res.data?.data || [];
         const sorted = [...list].sort(
           (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
-        const latest = sorted[0];
-        if (!latest || !isSubscribed) return;
+        if (!isSubscribed) return;
+        setAvailablePOs(sorted);
 
-        setActivePoId(latest.id);
-        setCurrentPoNumber(latest.poNumber || `PO-${latest.id.slice(-6)}`);
-        setCurrentCustomer(latest.customerName || "Enterprise Client");
-        setCurrentDocumentName(latest.documentName || `${latest.poNumber}.pdf`);
-        if (latest.totalAmount) {
-          setCurrentTotalAmount(latest.totalAmount);
+        const latest = sorted[0];
+        if (latest) {
+          setActivePoId(latest.id);
+          setSelectedPoId(latest.id);
+          setCurrentPoNumber(latest.poNumber || `PO-${latest.id.slice(-6)}`);
+          setCurrentCustomer(latest.customerName || "Enterprise Client");
+          setCurrentDocumentName(latest.documentName || `${latest.poNumber}.pdf`);
+          if (latest.totalAmount) {
+            setCurrentTotalAmount(latest.totalAmount);
+          }
         }
       } catch {
         // Fallback gracefully to default enterprise PO
@@ -237,17 +268,49 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
       setElapsedMs(0);
 
       setActiveStepIndex((prev) => {
+        // If finishing node 8 (Completed)
+        if (prev === PIPELINE_NODES.length - 1) {
+          setCompletedSteps(new Set([0, 1, 2, 3, 4, 5, 6, 7]));
+          // If NOT in continuous looping mode, halt at step 7 so the user can inspect
+          if (!isLooping) {
+            setIsPlaying(false);
+            setLogs((prevLogs) => [
+              {
+                id: `${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                agent: "Posting Agent",
+                message: `ERP Voucher posted for ${currentPoNumber}. Pipeline 100% completed. Ready to inspect.`,
+                level: "success"
+              },
+              ...prevLogs.slice(0, 4)
+            ]);
+            return prev;
+          }
+        }
+
         const next = (prev + 1) % PIPELINE_NODES.length;
 
         if (next === 0) {
           setCompletedSteps(new Set());
-          const randId = Math.floor(10000 + Math.random() * 90000);
-          setCurrentPoNumber(`PO-2026-${randId}`);
-          const sampleCustomers = ["Acme Global Ltd", "Stark Industries", "Globex Corp", "Bharat Electronics", "Tata Advanced Systems"];
-          const sampleDocs = ["vendor_order_batch.pdf", "procurement_spec_v2.pdf", "equipment_po_signed.pdf", "hardware_inv_req.pdf"];
-          setCurrentCustomer(sampleCustomers[Math.floor(Math.random() * sampleCustomers.length)]);
-          setCurrentDocumentName(sampleDocs[Math.floor(Math.random() * sampleDocs.length)]);
-          setCurrentTotalAmount(Math.floor(45000 + Math.random() * 250000));
+
+          if (selectedPoId === "all_loop" && availablePOs.length > 0) {
+            // Cycle to the next real PO from the list
+            const currentIdx = availablePOs.findIndex((p) => p.id === activePoId);
+            const nextPo = availablePOs[(currentIdx + 1) % availablePOs.length];
+            setActivePoId(nextPo.id);
+            setCurrentPoNumber(nextPo.poNumber || `PO-${nextPo.id.slice(-6)}`);
+            setCurrentCustomer(nextPo.customerName || "Enterprise Client");
+            setCurrentDocumentName(nextPo.documentName || `${nextPo.poNumber}.pdf`);
+            setCurrentTotalAmount(nextPo.totalAmount || 125000);
+          } else if (selectedPoId === "simulation") {
+            const randId = Math.floor(10000 + Math.random() * 90000);
+            setCurrentPoNumber(`PO-2026-${randId}`);
+            const sampleCustomers = ["Acme Global Ltd", "Stark Industries", "Globex Corp", "Bharat Electronics", "Tata Advanced Systems"];
+            const sampleDocs = ["vendor_order_batch.pdf", "procurement_spec_v2.pdf", "equipment_po_signed.pdf", "hardware_inv_req.pdf"];
+            setCurrentCustomer(sampleCustomers[Math.floor(Math.random() * sampleCustomers.length)]);
+            setCurrentDocumentName(sampleDocs[Math.floor(Math.random() * sampleDocs.length)]);
+            setCurrentTotalAmount(Math.floor(45000 + Math.random() * 250000));
+          }
 
           const nowStr = new Date().toLocaleTimeString();
           setLogs((prevLogs) => [
@@ -255,7 +318,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
               id: `${Date.now()}`,
               timestamp: nowStr,
               agent: "Intake Service",
-              message: `Ingested document into S3. Initiating LangGraph pipeline.`,
+              message: `Ingested document into S3. Initiating LangGraph pipeline for ${currentPoNumber}.`,
               level: "info"
             },
             ...prevLogs.slice(0, 4)
@@ -268,7 +331,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
           let logMsg = `Completed execution in ${completedNode.baseLatency}. Output validated.`;
 
           if (completedNode.id === "extraction") {
-            logMsg = `Extracted 4 items. Confidence: 98.6%. Currency: INR (₹). Usage: ${completedNode.tokenUsage.input + completedNode.tokenUsage.output} tokens.`;
+            logMsg = `Extracted line items. Confidence: 98.6%. Currency: ${currencyMode}. Usage: ${completedNode.tokenUsage.input + completedNode.tokenUsage.output} tokens.`;
           } else if (completedNode.id === "matching") {
             logMsg = `Matched customer master & SKU catalog with 100% precision.`;
           } else if (completedNode.id === "validation") {
@@ -278,7 +341,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
           } else if (completedNode.id === "compliance") {
             logMsg = `GSTIN jurisdiction verified. Applied 18% CGST/SGST tax matrices.`;
           } else if (completedNode.id === "billing") {
-            logMsg = `Synthesized canonical invoice. PDF generated with INR (₹) totals.`;
+            logMsg = `Synthesized canonical invoice. PDF generated with ${currencyMode === "INR" ? "INR (₹)" : "USD ($)"} totals.`;
           } else if (completedNode.id === "completed") {
             logMsg = `Voucher posted to ERP. PO marked COMPLETED.`;
           }
@@ -302,7 +365,73 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
     return () => {
       if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
     };
-  }, [activeStepIndex, isPlaying]);
+  }, [activeStepIndex, isPlaying, isLooping, selectedPoId, availablePOs, currentPoNumber, currencyMode]);
+
+  const handleSwitchPO = (targetId: string) => {
+    setSelectedPoId(targetId);
+
+    if (targetId === "simulation") {
+      setActivePoId(null);
+      setCurrentPoNumber("PO-2026-SIM");
+      setCurrentCustomer("Global Procurement Corp");
+      setCurrentDocumentName("enterprise_order_sim.pdf");
+      setCurrentTotalAmount(175000);
+      setLogs((prev) => [
+        {
+          id: `${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          agent: "Orchestrator",
+          message: "Switched to Synthetic Multi-Tenant Continuous Simulation mode.",
+          level: "info"
+        },
+        ...prev
+      ]);
+    } else if (targetId === "all_loop") {
+      setIsLooping(true);
+      if (availablePOs.length > 0) {
+        const first = availablePOs[0];
+        setActivePoId(first.id);
+        setCurrentPoNumber(first.poNumber || `PO-${first.id.slice(-6)}`);
+        setCurrentCustomer(first.customerName || "Enterprise Client");
+        setCurrentDocumentName(first.documentName || `${first.poNumber}.pdf`);
+        setCurrentTotalAmount(first.totalAmount || 125000);
+      }
+      setLogs((prev) => [
+        {
+          id: `${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString(),
+          agent: "Orchestrator",
+          message: "Switched to Auto-Loop across all uploaded purchase orders.",
+          level: "info"
+        },
+        ...prev
+      ]);
+    } else {
+      const found = availablePOs.find((p) => p.id === targetId);
+      if (found) {
+        setActivePoId(found.id);
+        setCurrentPoNumber(found.poNumber || `PO-${found.id.slice(-6)}`);
+        setCurrentCustomer(found.customerName || "Enterprise Client");
+        setCurrentDocumentName(found.documentName || `${found.poNumber}.pdf`);
+        setCurrentTotalAmount(found.totalAmount || 125000);
+        setLogs((prev) => [
+          {
+            id: `${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString(),
+            agent: "Orchestrator",
+            message: `Switched target to ${found.poNumber} (${found.customerName || "Customer"}) — ${currencyFormat(found.totalAmount || 0)}.`,
+            level: "success"
+          },
+          ...prev
+        ]);
+      }
+    }
+
+    setActiveStepIndex(0);
+    setCompletedSteps(new Set());
+    setElapsedMs(0);
+    setIsPlaying(true);
+  };
 
   // Handle direct file upload from the monitor
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -409,20 +538,95 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
           </p>
         </div>
 
-        {/* Live Active Context & Action Controls */}
+        {/* Live Active Context & Action Switch Controls */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Active PO & Document Pill */}
-          <div className="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg bg-dark-elevated border border-dark-border text-xs font-mono">
-            <Radio className="w-3 h-3 text-accent-secondary animate-pulse" />
-            <span className="text-slate-400">Tracing:</span>
-            <span className="font-bold text-white">{currentPoNumber}</span>
-            <span className="text-emerald-400 font-semibold">{formatCurrency(currentTotalAmount)}</span>
-            <span className="text-slate-500 text-[10px] max-w-[140px] truncate hidden sm:inline" title={currentDocumentName}>
-              ({currentDocumentName})
-            </span>
+          {/* 1. Switch PO Dropdown */}
+          <div className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-dark-elevated border border-accent-secondary/40 text-xs font-mono">
+            <ArrowLeftRight className="w-3.5 h-3.5 text-accent-secondary animate-pulse flex-shrink-0" />
+            <span className="text-slate-400 text-[11px] font-semibold hidden sm:inline">Switch PO:</span>
+            <select
+              value={selectedPoId}
+              onChange={(e) => handleSwitchPO(e.target.value)}
+              className="bg-dark-secondary text-white text-xs font-bold rounded px-2 py-1 border border-dark-border outline-none focus:border-accent-secondary cursor-pointer max-w-[190px] truncate"
+              title="Switch which purchase order to trace in the live pipeline"
+            >
+              {availablePOs.length > 0 ? (
+                <>
+                  <optgroup label="Uploaded Purchase Orders">
+                    {availablePOs.map((p, idx) => (
+                      <option key={p.id} value={p.id} className="bg-dark-primary text-white">
+                        {p.poNumber} {idx === 0 ? "★ (Newest)" : ""} — {currencyFormat(p.totalAmount || 0)}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Autonomous Modes">
+                    <option value="all_loop" className="bg-dark-primary text-indigo-400">
+                      🔄 Loop All Uploaded POs
+                    </option>
+                    <option value="simulation" className="bg-dark-primary text-emerald-400">
+                      ⚡ Continuous Demo Simulation
+                    </option>
+                  </optgroup>
+                </>
+              ) : (
+                <option value="simulation" className="bg-dark-primary text-emerald-400">
+                  ⚡ Continuous Demo Simulation
+                </option>
+              )}
+            </select>
           </div>
 
-          {/* Upload Button: Directly feed a file into the live monitor */}
+          {/* 2. Switch Mode Toggle (Single PO vs Continuous Loop) */}
+          <button
+            onClick={() => {
+              const next = !isLooping;
+              setIsLooping(next);
+              setLogs((prev) => [
+                {
+                  id: `${Date.now()}`,
+                  timestamp: new Date().toLocaleTimeString(),
+                  agent: "Orchestrator",
+                  message: next
+                    ? "Switched mode: Continuous Looping enabled."
+                    : "Switched mode: Single PO Lock enabled (pipeline halts at completion).",
+                  level: "info"
+                },
+                ...prev
+              ]);
+            }}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-dark-elevated hover:bg-dark-hover border border-dark-border text-xs font-mono text-slate-300 transition"
+            title={
+              isLooping
+                ? "Continuous Looping active. Click to lock on single PO."
+                : "Single PO active. Click to enable continuous looping."
+            }
+          >
+            <Repeat className={`w-3.5 h-3.5 ${isLooping ? "text-emerald-400 animate-spin-slow" : "text-slate-500"}`} />
+            <span className="text-slate-400 hidden md:inline">Mode:</span>
+            <span className={isLooping ? "text-emerald-400 font-bold" : "text-white font-semibold"}>
+              {isLooping ? "Loop" : "Single PO"}
+            </span>
+          </button>
+
+          {/* 3. Switch Currency Toggle */}
+          <button
+            onClick={() => setCurrencyMode(currencyMode === "INR" ? "USD" : "INR")}
+            className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-dark-elevated hover:bg-dark-hover border border-dark-border text-xs font-mono text-slate-300 transition"
+            title="Switch display currency between INR (₹) and USD ($)"
+          >
+            <span className="text-slate-400">Currency:</span>
+            <span className="font-bold text-accent-secondary">{currencyMode === "INR" ? "₹ INR" : "$ USD"}</span>
+          </button>
+
+          {/* Target PO Indicator Pill */}
+          <div className="hidden 2xl:flex items-center space-x-2 px-2.5 py-1.5 rounded-lg bg-dark-elevated border border-dark-border text-xs font-mono">
+            <Radio className="w-3 h-3 text-accent-secondary animate-pulse" />
+            <span className="text-slate-400">Target:</span>
+            <span className="font-bold text-white">{currentPoNumber}</span>
+            <span className="text-emerald-400 font-semibold">{currencyFormat(currentTotalAmount)}</span>
+          </div>
+
+          {/* Upload Button */}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploadingRealFile}
@@ -430,7 +634,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
             title="Upload any PO file (PDF/Image) to trace its live autonomous execution"
           >
             <UploadCloud className="w-3.5 h-3.5" />
-            <span>{isUploadingRealFile ? "Uploading..." : "Upload & Trace Live"}</span>
+            <span>{isUploadingRealFile ? "Uploading..." : "Upload PO"}</span>
           </button>
 
           {/* Play/Pause Button */}
@@ -454,11 +658,11 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
           {activePoId && (
             <Link
               to={`/pos/${activePoId}`}
-              className="p-1.5 rounded-lg bg-dark-elevated hover:bg-dark-hover border border-dark-border text-slate-300 transition flex items-center gap-1 text-xs font-mono"
+              className="px-2.5 py-1.5 rounded-lg bg-dark-elevated hover:bg-dark-hover border border-dark-border text-accent-secondary hover:text-white transition flex items-center gap-1 text-xs font-mono font-bold"
               title="View full PO details and generated invoice"
             >
-              <span className="hidden xl:inline text-[11px]">Inspect</span>
-              <ChevronRight className="w-3.5 h-3.5 text-accent-secondary" />
+              <span>Inspect</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           )}
         </div>
@@ -540,7 +744,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
               <Coins className="w-3.5 h-3.5 text-amber-400" />
               Autonomous Usage & Compute
             </span>
-            <span className="text-emerald-400">Cost: ₹{cumulativeUsage.totalCostInr.toFixed(2)}</span>
+            <span className="text-emerald-400">Cost: {computeCostFormatted()}</span>
           </div>
 
           <div className="grid grid-cols-3 gap-2 text-center pt-1">

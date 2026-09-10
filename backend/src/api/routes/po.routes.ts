@@ -314,7 +314,8 @@ poRouter.get("/:poId", async (req: Request, res: Response): Promise<void> => {
   }
 
   // Get download presigned URL for the original document
-  const download = await StorageService.getPresignedDownloadUrl(po.s3Key);
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const download = await StorageService.getPresignedDownloadUrl(po.s3Key, 300, baseUrl);
 
   res.status(200).json({
     id: po._id.toString(),

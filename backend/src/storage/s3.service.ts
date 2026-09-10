@@ -77,7 +77,11 @@ export class StorageService {
     }
   }
 
-  static async getPresignedDownloadUrl(s3Key: string, expiresInSeconds = 300): Promise<{ url: string; expiresAt: string }> {
+  static async getPresignedDownloadUrl(
+    s3Key: string,
+    expiresInSeconds = 300,
+    baseUrl?: string
+  ): Promise<{ url: string; expiresAt: string }> {
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
     if (env.STORAGE_PROVIDER === "s3" && this.s3Client) {
@@ -88,8 +92,9 @@ export class StorageService {
       const url = await getSignedUrl(this.s3Client, command, { expiresIn: expiresInSeconds });
       return { url, expiresAt };
     } else {
-      // Mock presigned URL pointing to local server mock static route or placeholder
-      const url = `http://localhost:${env.PORT}/api/v1/storage/download?key=${encodeURIComponent(s3Key)}`;
+      // Use the active server host/protocol (or fallback to port)
+      const base = baseUrl || `http://localhost:${env.PORT}`;
+      const url = `${base}${env.API_PREFIX}/storage/download?key=${encodeURIComponent(s3Key)}`;
       return { url, expiresAt };
     }
   }

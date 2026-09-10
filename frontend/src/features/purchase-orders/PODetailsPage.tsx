@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useParams, Link, useSearchParams } from "react-router-dom";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
 import { env } from "../../lib/env";
@@ -26,17 +26,28 @@ import {
   Copy,
   ChevronRight,
   Code2,
-  FileCheck2
+  FileCheck2,
+  ArrowLeftRight
 } from "lucide-react";
 
 
 
 export const PODetailsPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState<"items" | "reviews" | "audit" | "raw">("items");
   const [copiedJson, setCopiedJson] = useState(false);
+
+  // Fetch all POs for header switcher
+  const { data: allPosData } = useQuery<PurchaseOrder[]>({
+    queryKey: ["pos", "switcherList"],
+    queryFn: async () => {
+      const res = await apiClient.get<{ data: PurchaseOrder[] }>("/pos?pageSize=30");
+      return res.data?.data || [];
+    }
+  });
 
   const { data: po, isLoading, error, refetch } = useQuery<PurchaseOrder>({
     queryKey: ["po", id],
@@ -299,12 +310,34 @@ export const PODetailsPage: React.FC = () => {
       {/* Top Header & Breadcrumb Bar */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-2 border-b border-workspace-border">
         <div>
-          <nav className="flex items-center space-x-2 text-xs text-workspace-muted mb-1 font-medium">
+          <nav className="flex items-center space-x-2 text-xs text-workspace-muted mb-1 font-medium flex-wrap gap-y-1">
             <Link to="/pos" className="hover:text-workspace-text transition-colors">
               Purchase Orders
             </Link>
             <ChevronRight className="w-3.5 h-3.5 text-workspace-muted" />
             <span className="font-mono text-workspace-text font-semibold">{po.poNumber}</span>
+
+            {allPosData && allPosData.length > 1 && (
+              <div className="flex items-center space-x-1.5 ml-3 bg-white border border-workspace-border rounded-lg px-2 py-0.5 shadow-subtle">
+                <ArrowLeftRight className="w-3 h-3 text-accent-primary animate-pulse" />
+                <span className="text-[11px] text-workspace-muted font-semibold">Switch PO:</span>
+                <select
+                  value={id}
+                  onChange={(e) => navigate(`/pos/${e.target.value}`)}
+                  className="bg-transparent text-workspace-text font-mono text-[11px] font-bold outline-none cursor-pointer max-w-[200px] truncate"
+                  title="Switch to inspect any other purchase order"
+                >
+                  <option value={id}>{po.poNumber} (Current)</option>
+                  {allPosData
+                    .filter((p) => p.id !== id)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.poNumber} — {p.customerName ? `${p.customerName.slice(0, 16)}...` : ""} ({formatCurrency(p.totalAmount)})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
           </nav>
           <div className="flex items-center space-x-3">
             <h1 className="text-2xl font-black text-workspace-text font-mono tracking-tight">
@@ -433,6 +466,7 @@ export const PODetailsPage: React.FC = () => {
             documentUrl={po.documentUrl}
             poNumber={po.poNumber}
             customerName={po.customerName}
+            po={po}
           />
         </div>
 
