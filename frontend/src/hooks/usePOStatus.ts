@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../lib/axios";
 import { POStatus } from "../types";
 
@@ -11,12 +12,19 @@ export interface POStatusResponse {
   updatedAt: string;
 }
 
-const BACKOFF_SCHEDULE = [2000, 4000, 8000, 15000, 30000];
+// How often to poll while the pipeline is actively running (ms)
+const ACTIVE_POLL_INTERVAL = 3000;
+// Backoff schedule for non-terminal waiting states after activity slows
+const BACKOFF_SCHEDULE = [3000, 5000, 10000, 20000, 30000];
+
+const TERMINAL_STATES: POStatus[] = ["COMPLETED", "FAILED", "REJECTED", "HUMAN_REVIEW"];
 
 export function usePOStatus(poId: string | undefined, initialStatus?: POStatus) {
+  const queryClient = useQueryClient();
   const [statusData, setStatusData] = useState<POStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const prevStatusRef = useRef<POStatus | undefined>(initialStatus);
 
   const backoffIndexRef = useRef<number>(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,26 +42,38 @@ export function usePOStatus(poId: string | undefined, initialStatus?: POStatus) 
       setStatusData(data);
       setError(null);
 
-      // Terminal states where polling halts entirely
-      if (
-        data.status === "COMPLETED" ||
-        data.status === "FAILED" ||
-        data.status === "REJECTED"
-      ) {
+      // If status changed, invalidate the full PO query so UI shows fresh extracted data
+      if (prevStatusRef.current !== data.status) {
+        prevStatusRef.current = data.status;
+        queryClient.invalidateQueries({ queryKey: ["po", poId] });
+        queryClient.invalidateQueries({ queryKey: ["pos"] });
+      }
+
+      // Terminal states: stop polling
+      if (TERMINAL_STATES.includes(data.status)) {
         return;
       }
 
-      // On HUMAN_REVIEW, stop aggressive polling
-      if (data.status === "HUMAN_REVIEW") {
-        return;
-      }
+      // While actively processing, poll aggressively; otherwise back off
+      const isActivelyProcessing =
+        data.status === "PROCESSING" ||
+        data.status === "EXTRACTED" ||
+        data.status === "VALIDATING" ||
+        data.status === "RAG_CHECKING" ||
+        data.status === "COMPLIANCE_CHECKING" ||
+        data.status === "INVOICE_GENERATING" ||
+        data.status === "INVOICE_VALIDATING";
 
-      // Schedule next polling attempt with progressive backoff capped at 30s
-      const delay = BACKOFF_SCHEDULE[backoffIndexRef.current] || 30000;
-      backoffIndexRef.current = Math.min(
-        backoffIndexRef.current + 1,
-        BACKOFF_SCHEDULE.length - 1
-      );
+      const delay = isActivelyProcessing
+        ? ACTIVE_POLL_INTERVAL
+        : BACKOFF_SCHEDULE[backoffIndexRef.current] || 30000;
+
+      if (!isActivelyProcessing) {
+        backoffIndexRef.current = Math.min(
+          backoffIndexRef.current + 1,
+          BACKOFF_SCHEDULE.length - 1
+        );
+      }
 
       timerRef.current = setTimeout(() => {
         if (isMountedRef.current) fetchStatus();
@@ -67,11 +87,12 @@ export function usePOStatus(poId: string | undefined, initialStatus?: POStatus) 
         setIsLoading(false);
       }
     }
-  }, [poId]);
+  }, [poId, queryClient]);
 
   useEffect(() => {
     isMountedRef.current = true;
     backoffIndexRef.current = 0;
+    prevStatusRef.current = initialStatus;
 
     if (poId) {
       fetchStatus();

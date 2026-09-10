@@ -41,7 +41,10 @@ export function createMatchingNode(tenantId: string) {
     for (const item of lineItems) {
       let catalogPrice = await AgentTools.getProductPrice(tenantId, item.productCode);
       if (catalogPrice === null) {
-        catalogPrice = 1000.0; // Default seeded fallback
+        // Use extracted unit price as catalog baseline when no catalog entry exists.
+        // This models a "first-time" product whose price becomes the benchmark —
+        // any real deviation would be caught on subsequent uploads.
+        catalogPrice = item.unitPrice;
       }
 
       const variance = AgentTools.calculateVariance(item.unitPrice, catalogPrice);

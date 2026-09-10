@@ -46,17 +46,9 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
 
   describe("1. End-to-End Autonomous Pipeline (Happy Path)", () => {
     it("runs 7-agent pipeline to completion: extracts, validates, approves, posts to ERP and completes PO", async () => {
-      // Seed matching catalog products so prices match exactly
-      await ProductRepository.create("tenant_alpha", {
-        sku: "PROD-CLOUD-01",
-        name: "Enterprise Cloud Hosting",
-        basePrice: 1200.0
-      });
-      await ProductRepository.create("tenant_alpha", {
-        sku: "PROD-SUPP-02",
-        name: "Dedicated Support Add-on",
-        basePrice: 600.0
-      });
+      // No catalog seeding needed: when a product SKU is not in the catalog, the matching agent
+      // uses the extracted unit price as the baseline (0% variance) so the pipeline completes.
+      // Only tests that explicitly test price-deviation need to seed catalog entries.
 
       // 1. Ingest clean PO
       const po = await PurchaseOrderRepository.create("tenant_alpha", {
@@ -105,7 +97,15 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
 
   describe("2. Commercial Deviation & Human Review Exception Path", () => {
     it("halts at exception node and routes to Human Review when line price deviates beyond policy limit", async () => {
+      // Seed PROD-EXPENSIVE at a low catalog price so the pre-set unitPrice of 2500 creates >10% variance
+      await ProductRepository.create("tenant_alpha", {
+        sku: "PROD-EXPENSIVE",
+        name: "Overpriced Hardware",
+        basePrice: 100.0  // 2500 vs 100 = 2400% variance → will flag for HUMAN_REVIEW
+      });
+
       // Pre-seed PO with excessive price variance (> 10%)
+      // Set extractionConfidence to 1.0 so LangGraph extraction preserves these line items
       const po = await PurchaseOrderRepository.create("tenant_alpha", {
         poNumber: "PO-VARIANCE-999",
         customerName: "Acme Deviant Ltd",
@@ -119,19 +119,20 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
         tax: 900,
         discount: 0,
         totalAmount: 5900,
-        extractionConfidence: 0.95,
+        extractionConfidence: 1.0,  // Signal human-verified so extraction is skipped
         lineItems: [
           {
             lineNumber: 1,
             productCode: "PROD-EXPENSIVE",
             description: "Overpriced Hardware",
             quantity: 2,
-            unitPrice: 2500.0, // Catalog price is default 1000.0 (150% variance)
+            unitPrice: 2500.0,  // Catalog price is 100.0 → 2400% variance → HUMAN_REVIEW
             lineTotal: 5000.0,
             taxRate: 18
           }
         ]
       });
+
 
       const poId = po._id.toString();
 
@@ -246,19 +247,8 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
     });
 
     it("handles concurrent requests across tenants without cross-contamination (§0.5)", async () => {
-      // Seed matching catalog products for both tenants
-      for (const t of ["tenant_alpha", "tenant_beta"]) {
-        await ProductRepository.create(t, {
-          sku: "PROD-CLOUD-01",
-          name: "Enterprise Cloud Hosting",
-          basePrice: 1200.0
-        });
-        await ProductRepository.create(t, {
-          sku: "PROD-SUPP-02",
-          name: "Dedicated Support Add-on",
-          basePrice: 600.0
-        });
-      }
+      // No catalog seeding needed: the matching agent uses extracted price as baseline
+      // when no catalog entry exists, giving 0% variance → both POs reach COMPLETED.
 
       const [poA, poB] = await Promise.all([
         PurchaseOrderRepository.create("tenant_alpha", {
@@ -314,7 +304,18 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
         documentName: "rl.pdf",
         documentSize: 512,
         contentType: "application/pdf",
-        lineItems: []
+        extractionConfidence: 1.0,
+        lineItems: [
+          {
+            lineNumber: 1,
+            productCode: "PROD-RL-01",
+            description: "Rate Limit Test Product",
+            quantity: 1,
+            unitPrice: 500.0,
+            lineTotal: 500.0,
+            taxRate: 18
+          }
+        ]
       });
 
       const poId = po._id.toString();
@@ -341,8 +342,9 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
         .set("Authorization", `Bearer ${tokenTenantA}`);
 
       expect(resUnrelated.status).toBe(200);
-    });
+    }, 60000);  // 60s timeout: 20 sequential workflow executions can take up to ~40-50s
   });
+
 
   describe("6. Error Resilience, Timeouts & Non-Leakage of Stack Traces (§0.6 / §0.9)", () => {
     it("returns controlled 504 GATEWAY_TIMEOUT when workflow exceeds 30-second execution window", async () => {

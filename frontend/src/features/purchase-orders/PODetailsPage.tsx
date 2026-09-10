@@ -49,14 +49,24 @@ export const PODetailsPage: React.FC = () => {
     }
   });
 
+  const TERMINAL_PO_STATES = ["COMPLETED", "FAILED", "REJECTED", "HUMAN_REVIEW"];
+
   const { data: po, isLoading, error, refetch } = useQuery<PurchaseOrder>({
     queryKey: ["po", id],
     queryFn: async () => {
       const res = await apiClient.get<PurchaseOrder>(`/pos/${id}`);
       return res.data;
     },
-    enabled: !!id
+    enabled: !!id,
+    // Poll every 4s while the pipeline is still running so extracted data appears live
+    refetchInterval: (query) => {
+      const data = query.state.data as PurchaseOrder | undefined;
+      if (!data) return 4000;
+      if (TERMINAL_PO_STATES.includes(data.status)) return false;
+      return 4000;
+    }
   });
+
 
   const { status: liveStatus, refetch: pollRefetch } = usePOStatus(id, po?.status);
 

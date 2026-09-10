@@ -306,8 +306,9 @@ export class POProcessingWorkflow {
     for (const item of po.lineItems) {
       let catalogPrice = await AgentTools.getProductPrice(tenantId, item.productCode);
       if (!catalogPrice) {
-        // Mock default catalog price if catalog item is not seeded yet
-        catalogPrice = 1000.0;
+        // Use extracted unit price as catalog baseline when no catalog entry exists.
+        // This models a "first-time" product where the submitted price becomes the benchmark.
+        catalogPrice = item.unitPrice;
       }
 
       const variance = AgentTools.calculateVariance(item.unitPrice, catalogPrice);

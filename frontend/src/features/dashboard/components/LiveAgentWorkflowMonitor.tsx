@@ -471,17 +471,68 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
         queryClient.invalidateQueries({ queryKey: ["dashboard"] });
         queryClient.invalidateQueries({ queryKey: ["invoices"] });
         setActivePoId(data.poId);
-        setCurrentPoNumber(`PO-${data.poId.slice(-6).toUpperCase()}`);
+
         setLogs((prev) => [
           {
             id: `${Date.now()}`,
             timestamp: new Date().toLocaleTimeString(),
             agent: "Intake Service",
-            message: `PO ${data.poId} accepted (202). Live LangGraph agents taking over execution.`,
+            message: `PO ${data.poId} accepted. Fetching real extracted data from pipeline...`,
             level: "success"
           },
           ...prev
         ]);
+
+        // Poll the PO record until extraction completes (not PROCESSING anymore)
+        // so we can display the real customer name, PO number, and total
+        let attempts = 0;
+        const pollForExtractedData = async () => {
+          try {
+            const poRes = await apiClient.get(`/pos/${data.poId}`);
+            const poRecord = poRes.data;
+            const isStillProcessing = poRecord.status === "PROCESSING" || poRecord.status === "UPLOADED";
+
+            if (!isStillProcessing || attempts >= 20) {
+              // Update switcher list so the new PO appears
+              const listRes = await apiClient.get("/pos?pageSize=25");
+              const sorted = [...(listRes.data?.data || [])].sort(
+                (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+              );
+              setAvailablePOs(sorted);
+
+              // Update monitor display with real extracted values
+              const realPoNumber = poRecord.poNumber && !poRecord.poNumber.startsWith("PENDING")
+                ? poRecord.poNumber
+                : `PO-${data.poId.slice(-6).toUpperCase()}`;
+              setCurrentPoNumber(realPoNumber);
+              setCurrentCustomer(poRecord.customerName || "Enterprise Client");
+              setCurrentDocumentName(poRecord.documentName || file.name);
+              if (poRecord.totalAmount && poRecord.totalAmount > 0) {
+                setCurrentTotalAmount(poRecord.totalAmount);
+              }
+              setSelectedPoId(data.poId);
+
+              setLogs((prev) => [
+                {
+                  id: `${Date.now()}`,
+                  timestamp: new Date().toLocaleTimeString(),
+                  agent: "Extraction Agent",
+                  message: `Extracted: ${realPoNumber} • ${poRecord.customerName || "Enterprise Client"} • ₹${(poRecord.totalAmount || 0).toLocaleString("en-IN")} • ${poRecord.lineItems?.length || 0} line items`,
+                  level: "success"
+                },
+                ...prev
+              ]);
+            } else {
+              attempts++;
+              setTimeout(pollForExtractedData, 2000);
+            }
+          } catch {
+            // Ignore poll errors — pipeline may still be booting
+          }
+        };
+
+        // Start polling after a brief delay to let the pipeline begin
+        setTimeout(pollForExtractedData, 3000);
       }
     } catch (err: any) {
       setLogs((prev) => [
@@ -489,8 +540,8 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
           id: `${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
           agent: "Intake Service",
-          message: `Live upload handled. Running autonomous deterministic simulation for ${file.name}.`,
-          level: "info"
+          message: `Upload failed: ${err?.response?.data?.message || err?.message || "Server error"}. Running simulation.`,
+          level: "warning"
         },
         ...prev
       ]);
