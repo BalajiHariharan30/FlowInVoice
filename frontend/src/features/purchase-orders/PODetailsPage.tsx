@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
 import { env } from "../../lib/env";
 import { PurchaseOrder, HumanReview, AuditLogItem, POStatus } from "../../types";
@@ -58,6 +58,7 @@ export const PODetailsPage: React.FC = () => {
       return res.data;
     },
     enabled: !!id,
+    placeholderData: keepPreviousData,
     // Poll every 4s while the pipeline is still running so extracted data appears live
     refetchInterval: (query) => {
       const data = query.state.data as PurchaseOrder | undefined;
@@ -479,7 +480,7 @@ export const PODetailsPage: React.FC = () => {
         {/* PANEL 1: Left Document Viewer (4 Columns) */}
         <div className="xl:col-span-4 h-[780px] rounded-xl overflow-hidden shadow-sm border border-workspace-border">
           <PDFDocumentViewer
-            key={po.id || id}
+            key={id}
             poId={po.id || id}
             documentName={po.documentName || `${po.poNumber}.pdf`}
             documentUrl={po.documentUrl}

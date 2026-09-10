@@ -47,7 +47,7 @@ export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
     if (documentUrl) {
       setViewMode("raw");
     }
-  }, [documentUrl, poId, poNumber]);
+  }, [documentUrl, poId]);
 
   const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 15, 180));
   const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 15, 60));
@@ -154,14 +154,14 @@ export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
         <div className="flex-1 bg-slate-100 p-2 overflow-auto flex justify-center items-center h-full">
           {documentName?.toLowerCase().endsWith(".pdf") ? (
             <iframe
-              key={documentUrl || po?.id || poId || poNumber}
+              key={documentUrl || poId || "preview-doc"}
               src={documentUrl}
               title={documentName}
               className="w-full h-full min-h-[680px] rounded-lg border border-workspace-border bg-white shadow"
             />
           ) : (
             <img
-              key={documentUrl || po?.id || poId || poNumber}
+              key={documentUrl || poId || "preview-doc"}
               src={documentUrl}
               alt={documentName}
               width={800}
