@@ -38,12 +38,16 @@ export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [viewMode, setViewMode] = useState<"extracted" | "raw">("extracted");
+  const [viewMode, setViewMode] = useState<"extracted" | "raw">(documentUrl ? "raw" : "extracted");
 
-  // Reset page and zoom when PO or document swaps
+  // Reset page, zoom, and auto-switch to raw when a real document file is loaded
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [po?.id, poId, documentUrl, poNumber]);
+    setZoomLevel(100);
+    if (documentUrl) {
+      setViewMode("raw");
+    }
+  }, [documentUrl, poId, poNumber]);
 
   const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 15, 180));
   const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 15, 60));
