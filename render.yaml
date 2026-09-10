@@ -4,12 +4,19 @@ services:
     env: node
     rootDir: backend
     plan: free
+    branch: main
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DEPLOY_VERSION
+        value: "1.0.3"
+      - key: DOCUMENT_AI_PROVIDER
+        value: mock
+
       - key: PORT
         value: 10000
       - key: STORAGE_PROVIDER
