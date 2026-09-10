@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
@@ -114,6 +114,13 @@ export const PODetailsPage: React.FC = () => {
   const [streamingActiveStep, setStreamingActiveStep] = useState<string | null>(null);
   const [streamingCompletedSteps, setStreamingCompletedSteps] = useState<string[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+
+  // Reset/cancel telemetry streaming when navigating to another PO
+  useEffect(() => {
+    setIsStreaming(false);
+    setStreamingActiveStep(null);
+    setStreamingCompletedSteps([]);
+  }, [id]);
 
   const runLangGraphWithTelemetry = async () => {
     if (!id || isStreaming) return;
@@ -462,6 +469,8 @@ export const PODetailsPage: React.FC = () => {
         {/* PANEL 1: Left Document Viewer (4 Columns) */}
         <div className="xl:col-span-4 h-[780px] rounded-xl overflow-hidden shadow-sm border border-workspace-border">
           <PDFDocumentViewer
+            key={po.id || id}
+            poId={po.id || id}
             documentName={po.documentName || `${po.poNumber}.pdf`}
             documentUrl={po.documentUrl}
             poNumber={po.poNumber}

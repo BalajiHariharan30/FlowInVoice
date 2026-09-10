@@ -65,28 +65,58 @@ export class ReviewRepository {
     return { data, pagination: calcPagination(page, pageSize, total) };
   }
 
+  static async updateReview(
+    tenantId: string,
+    id: string,
+    updates: Partial<IHumanReview>
+  ): Promise<IHumanReview | null> {
+    if (isDbConnected()) {
+      if (!mongoose.isValidObjectId(id)) return null;
+      return HumanReview.findOneAndUpdate(
+        { tenantId, _id: id },
+        { $set: { ...updates, updatedAt: new Date() } },
+        { new: true }
+      );
+    }
+    const doc = inMemory.reviews.get(id);
+    if (!doc || doc.tenantId !== tenantId) return null;
+    Object.assign(doc, updates, { updatedAt: new Date() });
+    return doc;
+  }
+
   static async resolveReview(
     tenantId: string,
     id: string,
     status: ReviewStatus,
     resolutionNotes: string,
-    resolvedBy: string
+    resolvedBy: string,
+    extra?: { discrepancyReport?: any[]; evidence?: any[] }
   ): Promise<IHumanReview | null> {
+    const updatePayload: any = {
+      status,
+      resolutionNotes,
+      resolvedBy,
+      resolvedAt: new Date()
+    };
+    if (extra?.discrepancyReport) {
+      updatePayload.discrepancyReport = extra.discrepancyReport;
+    }
+    if (extra?.evidence) {
+      updatePayload.evidence = extra.evidence;
+    }
+
     if (isDbConnected()) {
       if (!mongoose.isValidObjectId(id)) return null;
       return HumanReview.findOneAndUpdate(
         { tenantId, _id: id, status: "PENDING" },
-        { $set: { status, resolutionNotes, resolvedBy, resolvedAt: new Date() } },
+        { $set: updatePayload },
         { new: true }
       );
     }
     const doc = inMemory.reviews.get(id);
     if (!doc || doc.tenantId !== tenantId || doc.status !== "PENDING") return null;
-    doc.status = status;
-    doc.resolutionNotes = resolutionNotes;
-    doc.resolvedBy = resolvedBy;
-    doc.resolvedAt = new Date();
-    doc.updatedAt = new Date();
+    Object.assign(doc, updatePayload, { updatedAt: new Date() });
     return doc;
   }
 }
+

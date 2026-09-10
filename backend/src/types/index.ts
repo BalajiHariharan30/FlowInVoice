@@ -40,6 +40,17 @@ export interface EvidenceItem {
   claim: string;
 }
 
+export interface DiscrepancyItem {
+  nodeId: string;
+  field: string;
+  expectedValue: any;
+  extractedValue: any;
+  sourceClause?: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  message?: string;
+}
+
+
 export interface PaginationParams {
   page?: number;
   pageSize?: number;

@@ -297,6 +297,29 @@ const EvidenceItemSchema = new Schema<IEvidenceItem>(
   { _id: false }
 );
 
+export interface IDiscrepancyItem {
+  nodeId: string;
+  field: string;
+  expectedValue: any;
+  extractedValue: any;
+  sourceClause?: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  message?: string;
+}
+
+const DiscrepancyItemSchema = new Schema(
+  {
+    nodeId: { type: String, required: true },
+    field: { type: String, required: true },
+    expectedValue: { type: Schema.Types.Mixed },
+    extractedValue: { type: Schema.Types.Mixed },
+    sourceClause: { type: String },
+    severity: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "HIGH" },
+    message: { type: String }
+  },
+  { _id: false }
+);
+
 export interface IHumanReview extends Document {
   tenantId: string;
   entity: "purchase_order" | "invoice";
@@ -309,6 +332,7 @@ export interface IHumanReview extends Document {
   expectedValue?: string;
   actualValue?: string;
   evidence: IEvidenceItem[];
+  discrepancyReport?: IDiscrepancyItem[];
   assignedTo?: string;
   resolutionNotes?: string;
   resolvedBy?: string;
@@ -330,6 +354,7 @@ const HumanReviewSchema = new Schema<IHumanReview>(
     expectedValue: { type: String },
     actualValue: { type: String },
     evidence: [EvidenceItemSchema],
+    discrepancyReport: [DiscrepancyItemSchema],
     assignedTo: { type: String },
     resolutionNotes: { type: String },
     resolvedBy: { type: String },
@@ -403,6 +428,7 @@ export interface IAuditLog extends Document {
   references?: string[];
   traceId?: string;
   traceLocation?: string;
+  metadata?: Record<string, any>;
 }
 
 const AuditLogSchema = new Schema<IAuditLog>(
@@ -424,7 +450,8 @@ const AuditLogSchema = new Schema<IAuditLog>(
     summary: { type: String, required: true },
     references: [{ type: String }],
     traceId: { type: String },
-    traceLocation: { type: String }
+    traceLocation: { type: String },
+    metadata: { type: Schema.Types.Mixed }
   },
   { timestamps: false }
 );

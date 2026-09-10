@@ -23,6 +23,7 @@ interface PDFDocumentViewerProps {
   customerName?: string;
   totalPages?: number;
   po?: PurchaseOrder;
+  poId?: string;
 }
 
 export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
@@ -31,12 +32,18 @@ export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
   poNumber = "PO-2026-1042",
   customerName = "Acme Technologies",
   totalPages = 1,
-  po
+  po,
+  poId
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [viewMode, setViewMode] = useState<"extracted" | "raw">("extracted");
+
+  // Reset page and zoom when PO or document swaps
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [po?.id, poId, documentUrl, poNumber]);
 
   const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev + 15, 180));
   const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev - 15, 60));
@@ -143,12 +150,14 @@ export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
         <div className="flex-1 bg-slate-100 p-2 overflow-auto flex justify-center items-center h-full">
           {documentName?.toLowerCase().endsWith(".pdf") ? (
             <iframe
+              key={documentUrl || po?.id || poId || poNumber}
               src={documentUrl}
               title={documentName}
               className="w-full h-full min-h-[680px] rounded-lg border border-workspace-border bg-white shadow"
             />
           ) : (
             <img
+              key={documentUrl || po?.id || poId || poNumber}
               src={documentUrl}
               alt={documentName}
               className="max-w-full max-h-full object-contain rounded-lg shadow border border-workspace-border"

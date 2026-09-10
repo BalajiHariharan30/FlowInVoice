@@ -10,6 +10,7 @@ import {
 import { POProcessingWorkflow } from "../../agents/workflow.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
 import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
+import { ReanalysisService } from "../../ai/workflow/reanalysis.service.js";
 import { logger } from "../../utils/logger.js";
 
 export const reviewRouter = Router();
@@ -241,6 +242,101 @@ reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Prom
     return;
   }
 
+  // BUG 1 FIX: If reviewing a Purchase Order, run comprehensive re-analysis across Nodes 02–06
+  if (review.entity === "purchase_order") {
+    const reanalysis = await ReanalysisService.reanalyzePurchaseOrder(tenantId, review.entityId);
+
+    // Case A: If ZERO discrepancies remain within tolerance -> DO NOT auto-reject!
+    // Route back to Human Review with note "resolved on re-check" for confirmation.
+    if (reanalysis.discrepancies.length === 0) {
+      const resolutionNotes =
+        "Resolved on re-check. No discrepancies found within tolerance; confirmation required.";
+      const updated = await ReviewRepository.updateReview(tenantId, review._id.toString(), {
+        resolutionNotes,
+        evidence: [...(review.evidence || []), ...reanalysis.evidence]
+      });
+
+      await AuditRepository.create(tenantId, {
+        agentName: "ReanalysisEngine",
+        action: "REANALYSIS_CLEARED",
+        status: "SUCCESS",
+        entityId: review.entityId,
+        workflowId: "manual_review",
+        summary: `Re-analysis across Nodes 02-06 detected NO remaining discrepancies for PO ${review.entityId}. Routed back to review center for confirmation.`
+      });
+
+      res.status(200).json({
+        id: updated!._id.toString(),
+        entity: updated!.entity,
+        entityId: updated!.entityId,
+        stage: updated!.stage,
+        status: "PENDING",
+        resolutionNotes,
+        resolvedBy: updated!.resolvedBy,
+        resolvedAt: updated!.resolvedAt,
+        discrepancyReport: [],
+        message: "No discrepancies found on re-check. Ticket remains PENDING for reviewer confirmation."
+      });
+      return;
+    }
+
+    // Case B: Discrepancies exist! Collect all discrepancies into structured DiscrepancyReport
+    // Persist report to HumanReview record & AuditTrail, mark review REJECTED and PO REJECTED.
+    const combinedEvidence = [...(review.evidence || []), ...reanalysis.evidence];
+    const resolved = await ReviewRepository.resolveReview(
+      tenantId,
+      review._id.toString(),
+      "REJECTED",
+      reason,
+      req.user!.email,
+      {
+        discrepancyReport: reanalysis.discrepancies,
+        evidence: combinedEvidence
+      }
+    );
+
+    // Mark PO REJECTED with summary reasons
+    const summaryReasons = reanalysis.discrepancies
+      .map((d) => `[${d.nodeId}] ${d.message || d.field}`)
+      .join("; ");
+
+    await PurchaseOrderRepository.updateStatus(
+      tenantId,
+      review.entityId,
+      "REJECTED",
+      `Rejection confirmed with ${reanalysis.discrepancies.length} discrepancies: ${summaryReasons}`
+    );
+
+    // Persist immutable audit log with full discrepancy report
+    await AuditRepository.create(tenantId, {
+      agentName: "ReanalysisEngine",
+      action: "REVIEW_REJECTED_WITH_REANALYSIS",
+      status: "EXCEPTION",
+      entityId: review.entityId,
+      workflowId: "manual_review",
+      summary: `Human review rejected by ${req.user!.email}. Complete pipeline re-analysis identified ${reanalysis.discrepancies.length} discrepancies across Nodes 02-06. Reason: ${reason}`,
+      metadata: {
+        discrepancyReport: reanalysis.discrepancies,
+        discrepancyCount: reanalysis.discrepancies.length,
+        reviewerNotes: reason
+      }
+    });
+
+    res.status(200).json({
+      id: resolved!._id.toString(),
+      entity: resolved!.entity,
+      entityId: resolved!.entityId,
+      stage: resolved!.stage,
+      status: resolved!.status,
+      resolutionNotes: resolved!.resolutionNotes,
+      resolvedBy: resolved!.resolvedBy,
+      resolvedAt: resolved!.resolvedAt,
+      discrepancyReport: reanalysis.discrepancies
+    });
+    return;
+  }
+
+  // Fallback for invoice stage exceptions
   const resolved = await ReviewRepository.resolveReview(
     tenantId,
     review._id.toString(),
@@ -249,25 +345,7 @@ reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Prom
     req.user!.email
   );
 
-  // Stage-specific rejection outcome per §B19 & §C11.2
-  if (review.stage === "extraction") {
-    // Notify customer and mark PO closed/rejected
-    await PurchaseOrderRepository.updateStatus(
-      tenantId,
-      review.entityId,
-      "REJECTED",
-      `Extraction rejected: ${reason}`
-    );
-  } else if (review.stage === "validation") {
-    // Mark PO REJECTED
-    await PurchaseOrderRepository.updateStatus(
-      tenantId,
-      review.entityId,
-      "REJECTED",
-      `Commercial validation rejected: ${reason}`
-    );
-  } else if (review.stage === "invoice") {
-    // Hold invoice for correction / REJECTED
+  if (review.stage === "invoice") {
     await InvoiceRepository.updateStatus(tenantId, review.entityId, "REJECTED");
     const inv = await InvoiceRepository.findById(tenantId, review.entityId);
     if (inv) {

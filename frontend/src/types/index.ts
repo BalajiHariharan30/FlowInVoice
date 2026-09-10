@@ -137,6 +137,16 @@ export interface Invoice {
   updatedAt: string;
 }
 
+export interface DiscrepancyItem {
+  nodeId: string;
+  field: string;
+  expectedValue: any;
+  extractedValue: any;
+  sourceClause?: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  message?: string;
+}
+
 export interface HumanReview {
   id: string;
   entity: "purchase_order" | "invoice";
@@ -149,6 +159,7 @@ export interface HumanReview {
   expectedValue?: string;
   actualValue?: string;
   evidence: EvidenceItem[];
+  discrepancyReport?: DiscrepancyItem[];
   assignedTo?: string;
   resolutionNotes?: string;
   resolvedBy?: string;

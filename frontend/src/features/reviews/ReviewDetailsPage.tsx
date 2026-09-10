@@ -213,15 +213,87 @@ export const ReviewDetailsPage: React.FC = () => {
         {/* PANEL 1: Left Document Preview (4 Columns) */}
         <div className="xl:col-span-4 h-[750px] rounded-xl overflow-hidden shadow-sm border border-workspace-border">
           <PDFDocumentViewer
+            key={po?.id || id}
+            poId={po?.id || id}
             documentName={po?.documentName || "Purchase_Order_Dispute.pdf"}
             documentUrl={po?.documentUrl}
             poNumber={po?.poNumber || "PO-REF"}
             customerName={po?.customerName || "Customer Account"}
+            po={po}
           />
         </div>
 
         {/* PANEL 2: Center Discrepancy & Evidence Analysis (5 Columns) */}
         <div className="xl:col-span-5 space-y-5">
+          {/* Complete Pipeline Re-Analysis Discrepancy Report (Nodes 02–06) */}
+          {review.discrepancyReport && review.discrepancyReport.length > 0 && (
+            <div className="workspace-card p-5 space-y-4 border-l-4 border-l-red-500 bg-red-50/20">
+              <div className="flex items-center justify-between pb-2 border-b border-workspace-border">
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-600" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-red-950 font-mono">
+                    Pipeline Discrepancy Report ({review.discrepancyReport.length} Issues Detected)
+                  </h3>
+                </div>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-red-100 text-red-800 border border-red-200">
+                  Nodes 02–06 Re-Checked
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-600">
+                Full-document re-analysis identified multiple independent discrepancies across verification nodes:
+              </p>
+
+              <div className="space-y-3">
+                {review.discrepancyReport.map((disc, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-lg bg-white border border-red-200 shadow-xs space-y-2 text-xs"
+                  >
+                    <div className="flex items-center justify-between flex-wrap gap-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200 uppercase">
+                          {disc.nodeId}
+                        </span>
+                        <span className="font-bold text-slate-900 font-mono">{disc.field}</span>
+                      </div>
+                      <span
+                        className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          disc.severity === "CRITICAL"
+                            ? "bg-red-600 text-white"
+                            : disc.severity === "HIGH"
+                            ? "bg-amber-500 text-white"
+                            : "bg-slate-200 text-slate-700"
+                        }`}
+                      >
+                        {disc.severity}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-800">{disc.message}</p>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[10px]">
+                      <div className="bg-emerald-50 p-2 rounded border border-emerald-100">
+                        <span className="text-emerald-700 uppercase font-bold block text-[9px]">Expected:</span>
+                        <span className="text-emerald-950 font-semibold">{String(disc.expectedValue)}</span>
+                      </div>
+                      <div className="bg-amber-50 p-2 rounded border border-amber-100">
+                        <span className="text-amber-700 uppercase font-bold block text-[9px]">Extracted:</span>
+                        <span className="text-amber-950 font-semibold">{String(disc.extractedValue)}</span>
+                      </div>
+                    </div>
+
+                    {disc.sourceClause && (
+                      <div className="text-[10px] text-slate-500 italic pt-0.5">
+                        Rule Reference: {disc.sourceClause}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Main Discrepancy Card */}
           <div className="workspace-card p-5 space-y-4">
             <div>
