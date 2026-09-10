@@ -98,58 +98,48 @@ export const LoginPage: React.FC = () => {
     }
   }, [login, navigate]);
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     const google = (window as any).google;
     if (google?.accounts?.id && env.VITE_GOOGLE_CLIENT_ID && !env.VITE_GOOGLE_CLIENT_ID.startsWith("mock")) {
-      google.accounts.id.prompt((notification: any) => {
+      google.accounts.id.prompt(async (notification: any) => {
         if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // If prompt cannot be displayed, fall back to demo enterprise admin
-          login(
-            "mock_google_access_token",
-            "mock_google_refresh_token",
-            {
-              id: "usr_enterprise_admin",
-              tenantId: "tenant_default",
-              email: "alex.finance@acme.corp",
-              name: "Alex Sterling (Enterprise Admin)",
-              role: "ADMIN"
-            }
-          );
-          navigate("/dashboard");
+          // Fall back to authenticating with live demo admin credentials
+          await handleQuickRoleLogin("ADMIN");
         }
       });
       return;
     }
 
-    login(
-      "mock_google_access_token",
-      "mock_google_refresh_token",
-      {
-        id: "usr_enterprise_admin",
-        tenantId: "tenant_default",
-        email: "alex.finance@acme.corp",
-        name: "Alex Sterling (Enterprise Admin)",
-        role: "ADMIN"
-      }
-    );
-    navigate("/dashboard");
+    await handleQuickRoleLogin("ADMIN");
   };
 
-  const handleQuickRoleLogin = (role: "ADMIN" | "FINANCE" | "REVIEWER") => {
+  const handleQuickRoleLogin = async (role: "ADMIN" | "FINANCE" | "REVIEWER") => {
     const roleMap = {
-      ADMIN: { id: "usr_admin", email: "admin@flowinvoice.ai", name: "System Administrator" },
-      FINANCE: { id: "usr_finance", email: "finance@flowinvoice.ai", name: "Sarah Chen (Finance Lead)" },
-      REVIEWER: { id: "usr_reviewer", email: "reviewer@flowinvoice.ai", name: "David Kim (Compliance Reviewer)" }
+      ADMIN: { email: "admin@flowinvoice.ai", password: "password123" },
+      FINANCE: { email: "finance@flowinvoice.ai", password: "password123" },
+      REVIEWER: { email: "reviewer@flowinvoice.ai", password: "password123" }
     };
-    const sel = roleMap[role];
-    login("mock_token_" + role.toLowerCase(), "mock_refresh_" + role.toLowerCase(), {
-      id: sel.id,
-      tenantId: "tenant_default",
-      email: sel.email,
-      name: sel.name,
-      role: role
-    });
-    navigate("/dashboard");
+    const creds = roleMap[role];
+    setIsSubmitting(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await apiClient.post("/auth/login", creds);
+      login(res.data.accessToken, res.data.refreshToken, {
+        id: res.data.id,
+        tenantId: res.data.tenantId,
+        email: res.data.email,
+        name: res.data.name,
+        role: res.data.role
+      });
+      navigate("/dashboard");
+    } catch (err: any) {
+      setErrorMessage(
+        err.response?.data?.message || err.message || "Failed to log in with demo credentials. Please try again."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const onEmailSubmit = async (data: { email: string; password: string }) => {
@@ -166,19 +156,9 @@ export const LoginPage: React.FC = () => {
       });
       navigate("/dashboard");
     } catch (err: any) {
-      // Graceful fallback for local development if server mock credentials used
-      if (data.email === "admin@flowinvoice.ai" || data.email === "admin@p2i.ai") {
-        login("mock_token_admin", "mock_refresh_admin", {
-          id: "usr_admin",
-          tenantId: "tenant_default",
-          email: data.email,
-          name: "System Administrator",
-          role: "ADMIN"
-        });
-        navigate("/dashboard");
-        return;
-      }
-      setErrorMessage(err.message || "Failed to sign in. Please check your credentials.");
+      setErrorMessage(
+        err.response?.data?.message || err.message || "Failed to sign in. Please check your credentials."
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -266,8 +246,9 @@ export const LoginPage: React.FC = () => {
           <div className="grid grid-cols-3 gap-2 text-xs">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => handleQuickRoleLogin("ADMIN")}
-              className="p-2 rounded-xl bg-dark-card hover:bg-dark-card-hover border border-dark-border hover:border-accent-primary/50 text-center transition"
+              className="p-2 rounded-xl bg-dark-card hover:bg-dark-card-hover border border-dark-border hover:border-accent-primary/50 text-center transition disabled:opacity-50"
             >
               <span className="font-bold text-white block text-[11px]">Admin</span>
               <span className="text-[10px] text-slate-400">Full Access</span>
@@ -275,8 +256,9 @@ export const LoginPage: React.FC = () => {
 
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => handleQuickRoleLogin("FINANCE")}
-              className="p-2 rounded-xl bg-dark-card hover:bg-dark-card-hover border border-dark-border hover:border-accent-primary/50 text-center transition"
+              className="p-2 rounded-xl bg-dark-card hover:bg-dark-card-hover border border-dark-border hover:border-accent-primary/50 text-center transition disabled:opacity-50"
             >
               <span className="font-bold text-white block text-[11px]">Finance</span>
               <span className="text-[10px] text-slate-400">Invoicing</span>
@@ -284,8 +266,9 @@ export const LoginPage: React.FC = () => {
 
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => handleQuickRoleLogin("REVIEWER")}
-              className="p-2 rounded-xl bg-dark-card hover:bg-dark-card-hover border border-dark-border hover:border-accent-primary/50 text-center transition"
+              className="p-2 rounded-xl bg-dark-card hover:bg-dark-card-hover border border-dark-border hover:border-accent-primary/50 text-center transition disabled:opacity-50"
             >
               <span className="font-bold text-white block text-[11px]">Reviewer</span>
               <span className="text-[10px] text-slate-400">Exceptions</span>
