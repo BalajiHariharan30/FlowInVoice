@@ -235,7 +235,7 @@ export const PODetailsPage: React.FC = () => {
 
   const runLangGraphMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiClient.post(`/pos/${id}/process-graph`);
+      const res = await apiClient.post(`/pos/${id}/process-graph`, {}, { timeout: 90000 });
       return res.data;
     },
     onSuccess: (data: any) => {

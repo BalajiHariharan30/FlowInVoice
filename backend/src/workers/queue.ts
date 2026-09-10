@@ -18,21 +18,24 @@ export class QueueManager {
 
   static async initialize(): Promise<void> {
     try {
-      this.redisConnection = new Redis({
-        host: env.REDIS_HOST,
-        port: env.REDIS_PORT,
-        password: env.REDIS_PASSWORD || undefined,
-        maxRetriesPerRequest: null,
-        connectTimeout: 1000,
-        enableOfflineQueue: false,
-        retryStrategy: () => null,
-        lazyConnect: true
-      });
+      const redisOpts = env.REDIS_URL
+        ? env.REDIS_URL
+        : {
+            host: env.REDIS_HOST,
+            port: env.REDIS_PORT,
+            password: env.REDIS_PASSWORD || undefined,
+            maxRetriesPerRequest: null,
+            connectTimeout: 2000,
+            enableOfflineQueue: false,
+            retryStrategy: () => null,
+            lazyConnect: true
+          };
 
-      this.redisConnection.on("error", () => {
+      this.redisConnection = new Redis(redisOpts as any);
+
+      this.redisConnection.on("error", (err) => {
         if (!this.isMock) {
-          logger.warn("Redis connection failed. Switching to local in-memory async runner");
-          this.isMock = true;
+          logger.warn({ err: err.message }, "Redis connection warning");
         }
       });
 
@@ -58,16 +61,25 @@ export class QueueManager {
         { connection: this.redisConnection }
       );
 
-      logger.info("BullMQ queues & workers initialized");
-    } catch (err) {
+      this.isMock = false;
+      logger.info("BullMQ queues & workers initialized with live Redis connection");
+    } catch (err: any) {
       if (this.redisConnection) {
         try {
           this.redisConnection.disconnect();
         } catch (_) {}
         this.redisConnection = null;
       }
-      logger.warn("Operating with in-process asynchronous queue runner");
       this.isMock = true;
+
+      if (env.REQUIRE_REDIS) {
+        throw new Error(`REQUIRE_REDIS is set to true, but Redis connection failed: ${err.message}`);
+      }
+
+      logger.warn(
+        { error: err.message },
+        "Redis unavailable — operating with asynchronous queue runner (non-blocking)"
+      );
     }
   }
 
@@ -87,14 +99,16 @@ export class QueueManager {
       }
     }
 
-    // In-process async execution (dev/test fallback)
-    setImmediate(async () => {
+    // Realistic asynchronous dispatch: schedules with a small stagger (300ms)
+    // so client receives the 202 Accepted response and can establish SSE / polling before pipeline steps execute
+    setTimeout(async () => {
       try {
+        logger.info({ tenantId, poId, jobId }, "Async Queue: Starting PO processing workflow");
         await POProcessingWorkflow.runWorkflow(tenantId, poId);
-      } catch (e) {
-        logger.error({ e, tenantId, poId }, "Async PO processing error");
+      } catch (e: any) {
+        logger.error({ e: e.message, tenantId, poId }, "Async PO processing error");
       }
-    });
+    }, 300);
 
     return jobId;
   }

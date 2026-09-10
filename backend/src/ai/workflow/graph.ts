@@ -139,12 +139,12 @@ export async function runOrchestrationWorkflow(
 
   const graph = buildOrchestrationGraph(tenantId);
 
-  const timeoutMs = options?.timeoutMs || 30000; // 30s default (§0.6)
+  const timeoutMs = options?.timeoutMs || Number(process.env.WORKFLOW_TIMEOUT_MS) || 60000; // 60s default for multi-agent multimodal pipelines
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(
       () =>
         reject(
-          new Error("Workflow orchestration timed out. Operation exceeded 30s limit.")
+          new Error(`Workflow orchestration timed out. Operation exceeded ${Math.round(timeoutMs / 1000)}s limit.`)
         ),
       timeoutMs
     ).unref();

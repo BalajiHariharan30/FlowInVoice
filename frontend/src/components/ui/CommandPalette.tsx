@@ -60,7 +60,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       id: "act_review",
       category: "Actions",
       title: "Review Pending Exceptions",
-      subtitle: "18 exceptions require human verification",
+      subtitle: "Inspect and resolve autonomous AI agent exceptions",
       icon: CheckSquare,
       action: () => {
         navigate("/reviews");

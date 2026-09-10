@@ -69,6 +69,7 @@ export const POUploadPage: React.FC = () => {
     try {
       const response = await apiClient.post("/pos", formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 90000,
         signal: abortControllerRef.current.signal,
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total) {

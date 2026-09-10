@@ -14,15 +14,33 @@ import {
   LogOut
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "../../lib/axios";
 
 export const Sidebar: React.FC = () => {
   const { user, activeTenant, logout } = useAuth();
+
+  const { data: summary } = useQuery<{ pendingReviews?: number }>({
+    queryKey: ["dashboard", "summary"],
+    queryFn: async () => {
+      const res = await apiClient.get("/dashboard/summary");
+      return res.data;
+    },
+    staleTime: 5000
+  });
+
+  const pendingCount = summary?.pendingReviews ?? 0;
 
   const navItems = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/pos", label: "Purchase Orders", icon: FileText },
     { to: "/invoices", label: "Invoices", icon: Receipt },
-    { to: "/reviews", label: "Review Center", icon: CheckSquare, badge: "18" },
+    {
+      to: "/reviews",
+      label: "Review Center",
+      icon: CheckSquare,
+      badge: pendingCount > 0 ? String(pendingCount) : undefined
+    },
     { to: "/customers", label: "Customers", icon: Building2 },
     { to: "/analytics", label: "Analytics", icon: BarChart3 },
     { to: "/audit/system", label: "Audit Logs", icon: ShieldCheck },

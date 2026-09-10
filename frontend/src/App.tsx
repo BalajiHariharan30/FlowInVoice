@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { env } from "./lib/env";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { ProtectedRoute } from "./routes/ProtectedRoute";
@@ -35,6 +36,12 @@ const queryClient = new QueryClient({
 });
 
 export const App: React.FC = () => {
+  useEffect(() => {
+    // Proactively wake up backend service from cold-sleep on initial app load
+    const base = env.VITE_API_BASE_URL.replace(/\/api\/v1\/?$/, "");
+    fetch(`${base}/health`).catch(() => {});
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>

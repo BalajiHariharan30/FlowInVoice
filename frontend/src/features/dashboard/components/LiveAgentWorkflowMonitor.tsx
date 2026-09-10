@@ -26,7 +26,24 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { apiClient } from "../../../lib/axios";
+import { env } from "../../../lib/env";
 import { formatCurrency } from "../../../lib/format";
+
+const STEP_NAME_TO_INDEX: Record<string, number> = {
+  intake: 0,
+  extraction: 1,
+  matching: 2,
+  povalidation: 3,
+  validation: 3,
+  policyevaluation: 4,
+  rag: 4,
+  approvaldecision: 5,
+  compliance: 5,
+  posting: 6,
+  billing: 6,
+  completed: 7,
+  exception: 7
+};
 
 interface LiveNode {
   id: string;
@@ -54,7 +71,7 @@ const PIPELINE_NODES: LiveNode[] = [
     id: "extraction",
     name: "02 Extraction",
     agent: "Multimodal OCR",
-    model: "gemini-1.5-pro",
+    model: "gemini-flash-lite",
     icon: Zap,
     baseLatency: "1.4s",
     tokenUsage: { input: 1240, output: 380 },
@@ -244,6 +261,164 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
     };
   }, []);
 
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const [isStreamingLive, setIsStreamingLive] = useState(false);
+
+  const startLiveStream = useCallback(async (targetPoId: string) => {
+    if (!targetPoId || targetPoId === "simulation") return;
+
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    streamAbortRef.current = abortController;
+    setIsStreamingLive(true);
+    setIsPlaying(true);
+
+    const token = localStorage.getItem("accessToken");
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    try {
+      const response = await fetch(`${env.VITE_API_BASE_URL}/pos/${targetPoId}/stream-graph`, {
+        method: "GET",
+        headers,
+        signal: abortController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`SSE stream returned status ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const messages = buffer.split("\n\n");
+          buffer = messages.pop() || "";
+
+          for (const message of messages) {
+            if (!message.trim()) continue;
+            const matchEvent = message.match(/event:\s*(.+)/);
+            const matchData = message.match(/data:\s*(.+)/);
+            const eventName = matchEvent ? matchEvent[1].trim() : "";
+            let eventData: any = {};
+            try {
+              if (matchData) eventData = JSON.parse(matchData[1].trim());
+            } catch {}
+
+            const nowStr = new Date().toLocaleTimeString();
+
+            if (eventName === "workflow_start") {
+              setActiveStepIndex(0);
+              setCompletedSteps(new Set());
+              setLogs((prev) => [
+                {
+                  id: `${Date.now()}`,
+                  timestamp: nowStr,
+                  agent: "Intake Service",
+                  message: `Initiating LangGraph autonomous pipeline for PO ${targetPoId}.`,
+                  level: "info"
+                },
+                ...prev.slice(0, 5)
+              ]);
+            } else if (eventName === "step_update") {
+              const stepKey = (eventData.step || "").toLowerCase();
+              const targetIndex = STEP_NAME_TO_INDEX[stepKey] ?? 1;
+
+              setActiveStepIndex(targetIndex);
+              setCompletedSteps((prev) => {
+                const updated = new Set(prev);
+                for (let i = 0; i < targetIndex; i++) {
+                  updated.add(i);
+                }
+                return updated;
+              });
+
+              const agentInfo = PIPELINE_NODES[targetIndex] || PIPELINE_NODES[1];
+              let logMsg = `Executing ${agentInfo.name} (${agentInfo.agent}). Step status: ${eventData.status}.`;
+              if (eventData.details?.validationErrorsCount) {
+                logMsg += ` Discrepancies detected: ${eventData.details.validationErrorsCount}.`;
+              }
+              if (eventData.details?.erpPostingId) {
+                logMsg += ` ERP Voucher created: ${eventData.details.erpPostingId}.`;
+              }
+
+              setLogs((prev) => [
+                {
+                  id: `${Date.now()}`,
+                  timestamp: nowStr,
+                  agent: agentInfo.agent,
+                  message: logMsg,
+                  level: eventData.isBusinessException ? "warning" : "info"
+                },
+                ...prev.slice(0, 5)
+              ]);
+            } else if (eventName === "workflow_complete") {
+              setActiveStepIndex(7);
+              setCompletedSteps(new Set([0, 1, 2, 3, 4, 5, 6, 7]));
+              setIsStreamingLive(false);
+
+              queryClient.invalidateQueries({ queryKey: ["pos"] });
+              queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+              queryClient.invalidateQueries({ queryKey: ["reviews"] });
+              queryClient.invalidateQueries({ queryKey: ["invoices"] });
+
+              setLogs((prev) => [
+                {
+                  id: `${Date.now()}`,
+                  timestamp: nowStr,
+                  agent: "Orchestrator",
+                  message: eventData.isBusinessException
+                    ? `PO routed to Human Review Center due to policy exception (${eventData.validationErrors?.[0] || "variance"}).`
+                    : `Pipeline 100% completed. ERP posting confirmed: ${eventData.erpPostingId || "Posted"}.`,
+                  level: eventData.isBusinessException ? "warning" : "success"
+                },
+                ...prev.slice(0, 5)
+              ]);
+            } else if (eventName === "workflow_error") {
+              setIsStreamingLive(false);
+              setLogs((prev) => [
+                {
+                  id: `${Date.now()}`,
+                  timestamp: nowStr,
+                  agent: "Supervisor",
+                  message: `Pipeline execution exception: ${eventData.message || "Stream error"}`,
+                  level: "warning"
+                },
+                ...prev.slice(0, 5)
+              ]);
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setIsStreamingLive(false);
+        setLogs((prev) => [
+          {
+            id: `${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString(),
+            agent: "Gateway",
+            message: `SSE Telemetry stream ended (${err.message}).`,
+            level: "warning"
+          },
+          ...prev.slice(0, 5)
+        ]);
+      }
+    } finally {
+      setIsStreamingLive(false);
+    }
+  }, [queryClient]);
+
   // Millisecond ticker for active node
   useEffect(() => {
     if (!isPlaying) return;
@@ -257,9 +432,9 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
     };
   }, [isPlaying]);
 
-  // Live execution loop through all 8 nodes
+  // Live execution loop through all 8 nodes (simulation fallback when no live SSE stream is active)
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || isStreamingLive) return;
 
     const stepDurations = [1200, 1800, 900, 800, 1600, 1000, 1200, 1400];
     const duration = stepDurations[activeStepIndex] || 1400;
@@ -463,7 +638,8 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
 
     try {
       const res = await apiClient.post("/pos", formData, {
-        headers: { "Content-Type": "multipart/form-data" }
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 90000
       });
       const data = res.data;
       if (data?.poId) {
@@ -471,20 +647,12 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
         queryClient.invalidateQueries({ queryKey: ["dashboard"] });
         queryClient.invalidateQueries({ queryKey: ["invoices"] });
         setActivePoId(data.poId);
+        setSelectedPoId(data.poId);
 
-        setLogs((prev) => [
-          {
-            id: `${Date.now()}`,
-            timestamp: new Date().toLocaleTimeString(),
-            agent: "Intake Service",
-            message: `PO ${data.poId} accepted. Fetching real extracted data from pipeline...`,
-            level: "success"
-          },
-          ...prev
-        ]);
+        // Immediately connect live SSE stream to watch real LangGraph agents execute
+        startLiveStream(data.poId);
 
-        // Poll the PO record until extraction completes (not PROCESSING anymore)
-        // so we can display the real customer name, PO number, and total
+        // Also poll for metadata (customer name, PO number) when available
         let attempts = 0;
         const pollForExtractedData = async () => {
           try {
@@ -493,14 +661,12 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
             const isStillProcessing = poRecord.status === "PROCESSING" || poRecord.status === "UPLOADED";
 
             if (!isStillProcessing || attempts >= 20) {
-              // Update switcher list so the new PO appears
               const listRes = await apiClient.get("/pos?pageSize=25");
               const sorted = [...(listRes.data?.data || [])].sort(
                 (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
               );
               setAvailablePOs(sorted);
 
-              // Update monitor display with real extracted values
               const realPoNumber = poRecord.poNumber && !poRecord.poNumber.startsWith("PENDING")
                 ? poRecord.poNumber
                 : `PO-${data.poId.slice(-6).toUpperCase()}`;
@@ -510,28 +676,15 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
               if (poRecord.totalAmount && poRecord.totalAmount > 0) {
                 setCurrentTotalAmount(poRecord.totalAmount);
               }
-              setSelectedPoId(data.poId);
-
-              setLogs((prev) => [
-                {
-                  id: `${Date.now()}`,
-                  timestamp: new Date().toLocaleTimeString(),
-                  agent: "Extraction Agent",
-                  message: `Extracted: ${realPoNumber} • ${poRecord.customerName || "Enterprise Client"} • ₹${(poRecord.totalAmount || 0).toLocaleString("en-IN")} • ${poRecord.lineItems?.length || 0} line items`,
-                  level: "success"
-                },
-                ...prev
-              ]);
             } else {
               attempts++;
               setTimeout(pollForExtractedData, 2000);
             }
           } catch {
-            // Ignore poll errors — pipeline may still be booting
+            // Ignore poll errors
           }
         };
 
-        // Start polling after a brief delay to let the pipeline begin
         setTimeout(pollForExtractedData, 3000);
       }
     } catch (err: any) {
@@ -540,7 +693,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
           id: `${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
           agent: "Intake Service",
-          message: `Upload failed: ${err?.response?.data?.message || err?.message || "Server error"}. Running simulation.`,
+          message: `Upload failed: ${err?.response?.data?.message || err?.message || "Server error"}.`,
           level: "warning"
         },
         ...prev
@@ -552,11 +705,15 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
   };
 
   const handleRestart = useCallback(() => {
-    setActiveStepIndex(0);
-    setCompletedSteps(new Set());
-    setElapsedMs(0);
-    setIsPlaying(true);
-  }, []);
+    if (activePoId && activePoId !== "simulation") {
+      startLiveStream(activePoId);
+    } else {
+      setActiveStepIndex(0);
+      setCompletedSteps(new Set());
+      setElapsedMs(0);
+      setIsPlaying(true);
+    }
+  }, [activePoId, startLiveStream]);
 
   return (
     <div className="dark-panel p-5 bg-dark-secondary text-slate-300 border border-dark-border shadow-elevated rounded-xl space-y-4">

@@ -20,7 +20,7 @@ export class ApiError extends Error {
 
 export const apiClient = axios.create({
   baseURL: env.VITE_API_BASE_URL,
-  timeout: 15000,
+  timeout: 60000, // 60 seconds default (handles Render free-tier cold starts & AI extraction)
   headers: {
     "Content-Type": "application/json"
   }
@@ -64,7 +64,22 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean; _retryCount?: number };
+
+    // Auto-retry once on timeout or cold-start network disconnect for idempotent GET requests
+    const isTimeout =
+      error.code === "ECONNABORTED" ||
+      (error.message && error.message.toLowerCase().includes("timeout"));
+    const isNetworkError = !error.response && error.code !== "ERR_CANCELED";
+
+    if (originalRequest && (isTimeout || isNetworkError) && !originalRequest._retryCount) {
+      if (originalRequest.method?.toLowerCase() === "get") {
+        originalRequest._retryCount = 1;
+        // Wait 2.5s for Render container to wake up, then retry transparently
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        return apiClient(originalRequest);
+      }
+    }
 
     // 401 handling: attempt refresh ONCE
     if (error.response?.status === 401 && !originalRequest._retry) {
@@ -129,6 +144,22 @@ apiClient.interceptors.response.use(
 function normalizeError(error: AxiosError<any>): ApiError {
   if (error.response?.data && error.response.data.code) {
     return new ApiError(error.response.data, error.response.status);
+  }
+
+  const isTimeout =
+    error.code === "ECONNABORTED" ||
+    (error.message && error.message.toLowerCase().includes("timeout"));
+
+  if (isTimeout) {
+    return new ApiError(
+      {
+        code: "GATEWAY_TIMEOUT",
+        message: "The server is taking longer than expected to respond (waking from sleep or running AI pipeline). Please retry in a few moments.",
+        details: {},
+        requestId: (error.response?.headers?.["x-request-id"] as string) || ""
+      },
+      504
+    );
   }
 
   return new ApiError(

@@ -85,19 +85,31 @@ export const ReviewListPage: React.FC = () => {
     { key: "invoice", label: "Invoice Discrepancies", desc: "Tax & line calculation" }
   ];
 
-  const totalReviews = data?.pagination?.total || 0;
+  const { data: summaryData } = useQuery<{ pendingReviews?: number }>({
+    queryKey: ["dashboard", "summary"],
+    queryFn: async () => {
+      const res = await apiClient.get("/dashboard/summary");
+      return res.data;
+    },
+    refetchInterval: 5000
+  });
+
+  const reviewsList = data?.data || [];
+  const pendingCount = summaryData?.pendingReviews ?? reviewsList.filter((r) => r.status === "PENDING").length;
+  const criticalCount = reviewsList.filter((r) => r.priority === "CRITICAL" || r.priority === "HIGH").length;
+  const resolvedCount = reviewsList.filter((r) => r.status === "APPROVED" || r.status === "REJECTED").length;
 
   return (
     <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      {/* Top Banner and Navigation */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2.5">
             <h1 className="text-2xl font-black text-workspace-text tracking-tight">
               Human Review Center
             </h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
-              {totalReviews} Exceptions
+              {pendingCount} Exception{pendingCount === 1 ? "" : "s"}
             </span>
           </div>
           <p className="text-xs text-workspace-muted mt-1">
@@ -111,7 +123,7 @@ export const ReviewListPage: React.FC = () => {
             <div className="w-2 h-2 rounded-full bg-amber-500"></div>
             <div>
               <span className="text-workspace-muted block text-[10px] font-semibold uppercase">Pending</span>
-              <span className="font-bold text-workspace-text text-sm">18</span>
+              <span className="font-bold text-workspace-text text-sm">{pendingCount}</span>
             </div>
           </div>
 
@@ -119,15 +131,15 @@ export const ReviewListPage: React.FC = () => {
             <div className="w-2 h-2 rounded-full bg-red-500"></div>
             <div>
               <span className="text-workspace-muted block text-[10px] font-semibold uppercase">Critical / High</span>
-              <span className="font-bold text-red-600 text-sm">4</span>
+              <span className="font-bold text-red-600 text-sm">{criticalCount}</span>
             </div>
           </div>
 
           <div className="workspace-card px-4 py-2 flex items-center space-x-3 text-xs">
             <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
             <div>
-              <span className="text-workspace-muted block text-[10px] font-semibold uppercase">Resolved Today</span>
-              <span className="font-bold text-emerald-600 text-sm">31</span>
+              <span className="text-workspace-muted block text-[10px] font-semibold uppercase">Resolved</span>
+              <span className="font-bold text-emerald-600 text-sm">{resolvedCount}</span>
             </div>
           </div>
         </div>

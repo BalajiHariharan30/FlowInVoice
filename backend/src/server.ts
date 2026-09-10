@@ -4,6 +4,7 @@ import { logger } from "./utils/logger.js";
 import { connectDatabase } from "./config/database.js";
 import { QdrantService } from "./rag/qdrant.service.js";
 import { QueueManager } from "./workers/queue.js";
+import { isDbConnected } from "./repositories/base.js";
 
 // Safety net: log unhandled promise rejections without crashing the server
 process.on("unhandledRejection", (reason: unknown) => {
@@ -35,6 +36,14 @@ async function bootstrap() {
     app.listen(env.PORT, () => {
       logger.info(`PO-to-Invoice Backend listening on port ${env.PORT}`);
       logger.info(`OpenAPI spec available at http://localhost:${env.PORT}/api/docs/openapi.json`);
+      logger.info({
+        DOCUMENT_AI_PROVIDER: env.DOCUMENT_AI_PROVIDER,
+        STORAGE_PROVIDER: env.STORAGE_PROVIDER,
+        VECTOR_PROVIDER: env.VECTOR_PROVIDER,
+        LLM_PROVIDER: env.LLM_PROVIDER,
+        ERP_PROVIDER: process.env.ERP_PROVIDER || "sandbox",
+        DATABASE: isDbConnected() ? "MongoDB Atlas (Live)" : "In-Memory Fallback"
+      }, "=== Active Production System Providers ===");
     });
   } catch (error) {
     logger.error({ error }, "Failed to start server");

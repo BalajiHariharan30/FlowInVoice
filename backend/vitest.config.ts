@@ -7,7 +7,10 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     testTimeout: 20000,
     env: {
-      DOCUMENT_AI_PROVIDER: "mock"
+      DOCUMENT_AI_PROVIDER: "mock",
+      STORAGE_PROVIDER: "mock",
+      VECTOR_PROVIDER: "mock",
+      LLM_PROVIDER: "mock"
     }
   }
 });

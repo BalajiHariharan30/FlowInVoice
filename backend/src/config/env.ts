@@ -21,6 +21,8 @@ const envSchema = z.object({
   REDIS_HOST: z.string().default("localhost"),
   REDIS_PORT: z.coerce.number().default(6379),
   REDIS_PASSWORD: z.string().optional().default(""),
+  REDIS_URL: z.string().optional(),
+  REQUIRE_REDIS: z.coerce.boolean().default(false),
 
   AWS_REGION: z.string().default(process.env.AWS_REGION || "us-east-1"),
   AWS_ACCESS_KEY_ID: z
@@ -32,13 +34,13 @@ const envSchema = z.object({
   AWS_S3_BUCKET_NAME: z
     .string()
     .default(process.env.AWS_S3_BUCKET_NAME || process.env.S3_BUCKET_NAME || "p2i-documents-bucket"),
-  STORAGE_PROVIDER: z.enum(["s3", "mock"]).default("mock"),
+  STORAGE_PROVIDER: z.enum(["s3", "mock"]).default("s3"),
 
   QDRANT_URL: z.string().default("http://localhost:6333"),
   QDRANT_API_KEY: z.string().optional().default(""),
-  VECTOR_PROVIDER: z.enum(["qdrant", "mock"]).default("mock"),
+  VECTOR_PROVIDER: z.enum(["qdrant", "mock"]).default("qdrant"),
 
-  LLM_PROVIDER: z.enum(["mistral", "groq", "openrouter", "mock"]).default("mock"),
+  LLM_PROVIDER: z.enum(["mistral", "groq", "openrouter", "mock"]).default("groq"),
   MISTRAL_API_KEY: z.string().optional().default(""),
   GROQ_API_KEY: z.string().optional().default(""),
   OPENROUTER_API_KEY: z.string().optional().default(""),
