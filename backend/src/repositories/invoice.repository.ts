@@ -88,7 +88,7 @@ export class InvoiceRepository {
         ];
       }
       const [data, total] = await Promise.all([
-        Invoice.find(query).skip((page - 1) * pageSize).limit(pageSize).sort({ createdAt: -1 }),
+        Invoice.find(query).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize),
         Invoice.countDocuments(query)
       ]);
       return { data, pagination: calcPagination(page, pageSize, total) };
@@ -106,6 +106,8 @@ export class InvoiceRepository {
           i.customerName?.toLowerCase().includes(q)
       );
     }
+    // Always sort newest first
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const total = items.length;
     const data = items.slice((page - 1) * pageSize, page * pageSize);
     return { data, pagination: calcPagination(page, pageSize, total) };

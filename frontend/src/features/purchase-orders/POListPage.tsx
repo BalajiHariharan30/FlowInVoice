@@ -37,8 +37,15 @@ export const POListPage: React.FC = () => {
 
       const res = await apiClient.get<PaginatedResponse<PurchaseOrder>>(`/pos?${params.toString()}`);
       return res.data;
-    }
+    },
+    staleTime: 0,
+    refetchOnMount: "always"
   });
+
+  const displayPOs = React.useMemo(() => {
+    if (!data?.data) return [];
+    return [...data.data].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [data?.data]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,7 +193,7 @@ export const POListPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {data.data.map((po) => (
+                {displayPOs.map((po) => (
                   <tr key={po.id}>
                     <td className="font-mono font-semibold text-accent-primary">
                       <Link to={`/pos/${po.id}`} className="hover:underline">

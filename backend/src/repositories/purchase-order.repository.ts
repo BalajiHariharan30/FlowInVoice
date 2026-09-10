@@ -114,7 +114,7 @@ export class PurchaseOrderRepository {
         if (params.dateTo) query.createdAt.$lte = new Date(params.dateTo);
       }
       const [data, total] = await Promise.all([
-        PurchaseOrder.find(query).skip((page - 1) * pageSize).limit(pageSize).sort({ createdAt: -1 }),
+        PurchaseOrder.find(query).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize),
         PurchaseOrder.countDocuments(query)
       ]);
       return { data, pagination: calcPagination(page, pageSize, total) };
@@ -131,6 +131,8 @@ export class PurchaseOrderRepository {
           p.customerName?.toLowerCase().includes(q)
       );
     }
+    // Always sort newest first so newly uploaded POs appear at the top
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const total = items.length;
     const data = items.slice((page - 1) * pageSize, page * pageSize);
     return { data, pagination: calcPagination(page, pageSize, total) };

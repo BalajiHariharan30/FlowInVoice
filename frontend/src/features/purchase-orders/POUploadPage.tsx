@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../lib/axios";
 import {
   UploadCloud,
@@ -16,6 +17,7 @@ import {
 
 export const POUploadPage: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -77,6 +79,12 @@ export const POUploadPage: React.FC = () => {
       });
 
       if (response.status === 202 || response.status === 200) {
+        // Immediately invalidate react-query caches so new PO appears everywhere
+        queryClient.invalidateQueries({ queryKey: ["pos"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+        queryClient.invalidateQueries({ queryKey: ["invoices"] });
+        queryClient.invalidateQueries({ queryKey: ["reviews"] });
+
         setUploadStatus("received");
         setTimeout(() => {
           setUploadStatus("processing");

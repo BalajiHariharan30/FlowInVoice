@@ -20,8 +20,8 @@ export class AuditRepository {
     if (isDbConnected()) {
       return AuditLog.find({ tenantId, entityId }).sort({ timestamp: -1 });
     }
-    return Array.from(inMemory.audits.values()).filter(
-      (l) => l.tenantId === tenantId && l.entityId === entityId
-    );
+    return Array.from(inMemory.audits.values())
+      .filter((l) => l.tenantId === tenantId && l.entityId === entityId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Sparkles,
   UploadCloud,
@@ -127,6 +128,7 @@ interface LogEntry {
 }
 
 export const LiveAgentWorkflowMonitor: React.FC = () => {
+  const queryClient = useQueryClient();
   const [activeStepIndex, setActiveStepIndex] = useState<number>(1);
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set([0]));
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
@@ -185,8 +187,12 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
 
     const fetchLatestPO = async () => {
       try {
-        const res = await apiClient.get("/pos?pageSize=1");
-        const latest = res.data?.data?.[0];
+        const res = await apiClient.get("/pos?pageSize=10");
+        const list = res.data?.data || [];
+        const sorted = [...list].sort(
+          (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        const latest = sorted[0];
         if (!latest || !isSubscribed) return;
 
         setActivePoId(latest.id);
@@ -332,6 +338,9 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
       });
       const data = res.data;
       if (data?.poId) {
+        queryClient.invalidateQueries({ queryKey: ["pos"] });
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+        queryClient.invalidateQueries({ queryKey: ["invoices"] });
         setActivePoId(data.poId);
         setCurrentPoNumber(`PO-${data.poId.slice(-6).toUpperCase()}`);
         setLogs((prev) => [

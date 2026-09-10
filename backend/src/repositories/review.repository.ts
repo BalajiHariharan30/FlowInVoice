@@ -49,7 +49,7 @@ export class ReviewRepository {
       if (params.stage) query.stage = params.stage;
       if (params.status) query.status = params.status;
       const [data, total] = await Promise.all([
-        HumanReview.find(query).skip((page - 1) * pageSize).limit(pageSize).sort({ createdAt: -1 }),
+        HumanReview.find(query).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize),
         HumanReview.countDocuments(query)
       ]);
       return { data, pagination: calcPagination(page, pageSize, total) };
@@ -58,6 +58,8 @@ export class ReviewRepository {
     let items = Array.from(inMemory.reviews.values()).filter((r) => r.tenantId === tenantId);
     if (params.stage) items = items.filter((r) => r.stage === params.stage);
     if (params.status) items = items.filter((r) => r.status === params.status);
+    // Always sort newest first
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     const total = items.length;
     const data = items.slice((page - 1) * pageSize, page * pageSize);
     return { data, pagination: calcPagination(page, pageSize, total) };
