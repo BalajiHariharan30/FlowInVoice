@@ -36,17 +36,34 @@ const envSchema = z.object({
     .default(process.env.AWS_S3_BUCKET_NAME || process.env.S3_BUCKET_NAME || "p2i-documents-bucket"),
   STORAGE_PROVIDER: z.enum(["s3", "mock"]).default("s3"),
 
+  MODEL_ARN: z
+    .string()
+    .optional()
+    .default(
+      process.env.MODEL_ARN ||
+        process.env.BEDROCK_MODEL_ARN ||
+        "arn:aws:bedrock:us-east-1:325999881191:inference-profile/us.meta.llama3-1-70b-instruct-v1:0"
+    ),
+  BEDROCK_MODEL_ARN: z
+    .string()
+    .optional()
+    .default(
+      process.env.BEDROCK_MODEL_ARN ||
+        process.env.MODEL_ARN ||
+        "arn:aws:bedrock:us-east-1:325999881191:inference-profile/us.meta.llama3-1-70b-instruct-v1:0"
+    ),
+
   QDRANT_URL: z.string().default("http://localhost:6333"),
   QDRANT_API_KEY: z.string().optional().default(""),
   VECTOR_PROVIDER: z.enum(["qdrant", "mock"]).default("qdrant"),
 
-  LLM_PROVIDER: z.enum(["mistral", "groq", "openrouter", "mock"]).default("groq"),
+  LLM_PROVIDER: z.enum(["bedrock", "mistral", "groq", "openrouter", "mock"]).default("bedrock"),
   MISTRAL_API_KEY: z.string().optional().default(""),
   GROQ_API_KEY: z.string().optional().default(""),
   OPENROUTER_API_KEY: z.string().optional().default(""),
   GEMINI_API_KEY: z.string().optional().default(""),
 
-  DOCUMENT_AI_PROVIDER: z.enum(["mistral_ocr", "vision_fallback", "mock"]).default("vision_fallback")
+  DOCUMENT_AI_PROVIDER: z.enum(["bedrock", "mistral_ocr", "vision_fallback", "mock"]).default("bedrock")
 });
 
 

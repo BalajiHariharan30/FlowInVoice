@@ -63,7 +63,7 @@ export function createApp(): Express {
   app.get("/health", (req: Request, res: Response) => {
     res.status(200).json({
       status: "healthy",
-      version: "1.0.3",
+      version: "1.0.4",
       timestamp: new Date().toISOString()
     });
   });

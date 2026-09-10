@@ -1,3 +1,4 @@
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { z } from "zod";
@@ -30,7 +31,31 @@ export class LLMService {
   ): Promise<LLMResponse<T>> {
     const startTime = Date.now();
 
-    // 1. Try Mistral if configured
+    // 1. Try AWS Bedrock if configured (Priority 1)
+    if (
+      env.LLM_PROVIDER === "bedrock" ||
+      (env.AWS_ACCESS_KEY_ID &&
+        env.AWS_SECRET_ACCESS_KEY &&
+        env.AWS_ACCESS_KEY_ID !== "mock-access-key")
+    ) {
+      try {
+        const res = await this.callBedrock(messages);
+        const jsonMatch = res.content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = schema.parse(JSON.parse(jsonMatch[0]));
+          return {
+            data: parsed,
+            model: "aws-bedrock/llama-3.1-70b",
+            latencyMs: Date.now() - startTime,
+            tokens: res.tokens
+          };
+        }
+      } catch (err) {
+        logger.warn({ err }, "AWS Bedrock call failed, falling back to Groq/Mistral");
+      }
+    }
+
+    // 2. Try Mistral if configured
     if (env.LLM_PROVIDER === "mistral" && env.MISTRAL_API_KEY) {
       try {
         const res = await this.callMistral(messages);
@@ -162,4 +187,57 @@ export class LLMService {
       }
     };
   }
+
+  private static async callBedrock(messages: LLMMessage[]): Promise<{ content: string; tokens: any }> {
+    const accessKeyId =
+      env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY || process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey =
+      env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+    const region = env.AWS_REGION || process.env.AWS_REGION || "us-east-1";
+    const modelId =
+      env.BEDROCK_MODEL_ARN ||
+      env.MODEL_ARN ||
+      process.env.MODEL_ARN ||
+      process.env.BEDROCK_MODEL_ARN ||
+      "arn:aws:bedrock:us-east-1:325999881191:inference-profile/us.meta.llama3-1-70b-instruct-v1:0";
+
+    const client = new BedrockRuntimeClient({
+      region,
+      credentials: {
+        accessKeyId: accessKeyId!,
+        secretAccessKey: secretAccessKey!
+      }
+    });
+
+    const bedrockMessages = messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
+        role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+        content: [{ text: m.content }]
+      }));
+
+    const systemPrompt = messages.find((m) => m.role === "system")?.content;
+
+    const command = new ConverseCommand({
+      modelId,
+      system: systemPrompt ? [{ text: systemPrompt }] : undefined,
+      messages: bedrockMessages,
+      inferenceConfig: {
+        maxTokens: 2048,
+        temperature: 0.1
+      }
+    });
+
+    const res = await client.send(command);
+    const content = res.output?.message?.content?.[0]?.text || "";
+    return {
+      content,
+      tokens: {
+        promptTokens: res.usage?.inputTokens || 100,
+        completionTokens: res.usage?.outputTokens || 50,
+        totalTokens: res.usage?.totalTokens || 150
+      }
+    };
+  }
 }
+

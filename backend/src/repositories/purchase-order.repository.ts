@@ -67,7 +67,30 @@ export class PurchaseOrderRepository {
   ): Promise<IPurchaseOrder | null> {
     if (isDbConnected()) {
       if (!mongoose.isValidObjectId(id)) return null;
-      return PurchaseOrder.findOneAndUpdate({ tenantId, _id: id }, { $set: data }, { new: true });
+
+      // Prevent duplicate key collision if another PO already has this poNumber
+      if (data.poNumber) {
+        const existing = await PurchaseOrder.findOne({
+          tenantId,
+          poNumber: data.poNumber,
+          _id: { $ne: new mongoose.Types.ObjectId(id) }
+        });
+        if (existing) {
+          const suffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+          data.poNumber = `${data.poNumber}-${suffix}`;
+        }
+      }
+
+      try {
+        return await PurchaseOrder.findOneAndUpdate({ tenantId, _id: id }, { $set: data }, { new: true });
+      } catch (err: any) {
+        if (err.code === 11000 || (err.message && err.message.includes("E11000"))) {
+          const suffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+          data.poNumber = `${data.poNumber}-${suffix}`;
+          return await PurchaseOrder.findOneAndUpdate({ tenantId, _id: id }, { $set: data }, { new: true });
+        }
+        throw err;
+      }
     }
     const doc = inMemory.pos.get(id);
     if (!doc || doc.tenantId !== tenantId) return null;

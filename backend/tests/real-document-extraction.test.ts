@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   DocumentExtractorFactory,
+  BedrockOCRProvider,
   GeminiVisionProvider,
   MistralOCRProvider,
   MockOCRProvider,
@@ -14,7 +15,7 @@ import {
 } from "../src/repositories/index.js";
 import { StorageService } from "../src/storage/s3.service.js";
 
-describe("Real Document Extraction & OCR Provider (§Fix Spec)", () => {
+describe("Real Document Extraction & OCR Provider (Â§Fix Spec)", () => {
   const tenantId = "tenant_ocr_test";
   const originalEnvProvider = env.DOCUMENT_AI_PROVIDER;
   const originalGeminiKey = env.GEMINI_API_KEY;
@@ -32,6 +33,9 @@ describe("Real Document Extraction & OCR Provider (§Fix Spec)", () => {
   });
 
   it("1. DocumentExtractorFactory correctly branches on DOCUMENT_AI_PROVIDER", () => {
+    env.DOCUMENT_AI_PROVIDER = "bedrock";
+    expect(DocumentExtractorFactory.getExtractor()).toBeInstanceOf(BedrockOCRProvider);
+
     env.DOCUMENT_AI_PROVIDER = "vision_fallback";
     expect(DocumentExtractorFactory.getExtractor()).toBeInstanceOf(GeminiVisionProvider);
 
@@ -209,5 +213,21 @@ describe("Real Document Extraction & OCR Provider (§Fix Spec)", () => {
     expect(parsedRawOcr.candidates).toBeDefined();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("6. BedrockOCRProvider throws a loud, clear error when AWS credentials are missing", async () => {
+    env.DOCUMENT_AI_PROVIDER = "bedrock";
+    env.AWS_ACCESS_KEY_ID = "";
+    delete process.env.AWS_ACCESS_KEY;
+    delete process.env.AWS_ACCESS_KEY_ID;
+
+    const provider = new BedrockOCRProvider();
+    await expect(
+      provider.extract({
+        buffer: Buffer.from("%PDF-1.4 real PO file content"),
+        fileName: "Real_Purchase_Order.pdf",
+        contentType: "application/pdf"
+      })
+    ).rejects.toThrow(/AWS_ACCESS_KEY \/ AWS_SECRET_KEY is not configured/i);
   });
 });
