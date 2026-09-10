@@ -48,7 +48,7 @@ export const AnalyticsPage: React.FC = () => {
       throughput: "1,284 docs",
       avgLatency: "420 ms",
       successRate: "99.8%",
-      costPerDoc: "$0.0004"
+      costPerDoc: "₹0.03"
     },
     {
       agent: "Multimodal Extraction Agent",
@@ -56,7 +56,7 @@ export const AnalyticsPage: React.FC = () => {
       throughput: "1,284 docs",
       avgLatency: "1,840 ms",
       successRate: "98.4%",
-      costPerDoc: "$0.0038"
+      costPerDoc: "₹0.31"
     },
     {
       agent: "Contract & Master Verifier",
@@ -64,7 +64,7 @@ export const AnalyticsPage: React.FC = () => {
       throughput: "1,242 docs",
       avgLatency: "310 ms",
       successRate: "99.9%",
-      costPerDoc: "$0.0003"
+      costPerDoc: "₹0.02"
     },
     {
       agent: "Agentic RAG Policy Engine",
@@ -72,7 +72,7 @@ export const AnalyticsPage: React.FC = () => {
       throughput: "1,242 docs",
       avgLatency: "950 ms",
       successRate: "96.7%",
-      costPerDoc: "$0.0024"
+      costPerDoc: "₹0.20"
     },
     {
       agent: "Tax & Compliance Agent",
@@ -80,7 +80,7 @@ export const AnalyticsPage: React.FC = () => {
       throughput: "1,109 docs",
       avgLatency: "280 ms",
       successRate: "99.2%",
-      costPerDoc: "$0.0002"
+      costPerDoc: "₹0.02"
     },
     {
       agent: "Canonical Invoice Generator",
@@ -88,7 +88,7 @@ export const AnalyticsPage: React.FC = () => {
       throughput: "1,087 docs",
       avgLatency: "1,210 ms",
       successRate: "99.5%",
-      costPerDoc: "$0.0019"
+      costPerDoc: "₹0.16"
     }
   ];
 

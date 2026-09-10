@@ -1,14 +1,16 @@
 export function formatCurrency(
   amount: number | string,
-  currency = "USD",
-  locale = "en-US"
+  currency = "INR",
+  locale = "en-IN"
 ): string {
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  if (isNaN(num)) return "$0.00";
+  if (isNaN(num)) return "₹0.00";
 
-  return new Intl.NumberFormat(locale, {
+  const targetCurrency = currency === "USD" ? "INR" : (currency || "INR");
+
+  return new Intl.NumberFormat(locale || "en-IN", {
     style: "currency",
-    currency: currency || "USD",
+    currency: targetCurrency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(num);

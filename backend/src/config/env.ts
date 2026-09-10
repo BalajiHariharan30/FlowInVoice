@@ -10,9 +10,9 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
 
   JWT_SECRET: z.string().default("super-secret-jwt-key-minimum-32-chars-length"),
-  JWT_EXPIRES_IN: z.string().default("15m"),
+  JWT_EXPIRES_IN: z.string().default("24h"),
   REFRESH_TOKEN_SECRET: z.string().default("super-secret-refresh-key-minimum-32-chars-length"),
-  REFRESH_TOKEN_EXPIRES_IN: z.string().default("7d"),
+  REFRESH_TOKEN_EXPIRES_IN: z.string().default("30d"),
   GOOGLE_CLIENT_ID: z.string().optional().default("mock-google-client-id"),
   GOOGLE_CLIENT_SECRET: z.string().optional().default("mock-google-client-secret"),
 

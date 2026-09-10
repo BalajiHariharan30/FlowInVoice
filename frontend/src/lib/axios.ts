@@ -20,6 +20,7 @@ export class ApiError extends Error {
 
 export const apiClient = axios.create({
   baseURL: env.VITE_API_BASE_URL,
+  timeout: 15000,
   headers: {
     "Content-Type": "application/json"
   }
@@ -108,9 +109,13 @@ apiClient.interceptors.response.use(
 
         processQueue(null, data.accessToken);
         return apiClient(originalRequest);
-      } catch (refreshErr) {
+      } catch (refreshErr: any) {
         processQueue(refreshErr, null);
-        clearAuthAndRedirect();
+        // Only clear auth and redirect if refresh token was rejected with 401/403
+        // Network errors or temporary 502s should NOT destroy the user's session
+        if (refreshErr?.response?.status === 401 || refreshErr?.response?.status === 403) {
+          clearAuthAndRedirect();
+        }
         return Promise.reject(normalizeError(refreshErr as AxiosError));
       } finally {
         isRefreshing = false;

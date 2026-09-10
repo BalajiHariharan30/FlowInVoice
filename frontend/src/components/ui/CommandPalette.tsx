@@ -105,7 +105,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ isOpen, onClose 
       id: "nav_inv_1",
       category: "Invoices",
       title: "INV-2026-889 — Stark Enterprises",
-      subtitle: "Total: $12,450.00 • Status: ISSUED",
+      subtitle: "Total: ₹12,450.00 • Status: ISSUED",
       icon: Receipt,
       action: () => {
         navigate("/invoices");

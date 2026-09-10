@@ -7,7 +7,7 @@ export const PurchaseOrderExtractionSchema = z.object({
   gstNumber: z.string().default(""),
   issueDate: z.string().default(() => new Date().toISOString().split("T")[0]),
   deliveryDate: z.string().optional(),
-  currency: z.string().default("USD"),
+  currency: z.string().default("INR"),
   paymentTerms: z.string().default("NET_30"),
   lineItems: z.array(
     z.object({
@@ -60,7 +60,7 @@ export class MockOCRProvider implements DocumentExtractor {
       gstNumber: "27AABCU9603R1ZM",
       issueDate: new Date().toISOString().split("T")[0],
       deliveryDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
-      currency: "USD",
+      currency: "INR",
       paymentTerms: "NET_30",
       lineItems: [
         {

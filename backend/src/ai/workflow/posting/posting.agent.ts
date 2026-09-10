@@ -222,9 +222,10 @@ function generateInvoicePdfBuffer(data: PdfInvoiceData): Promise<Buffer> {
     // Totals
     doc.moveDown();
     doc.font("Helvetica-Bold");
-    doc.text(`Subtotal: $${Number(data.subtotal).toFixed(2)}`, { align: "right" });
-    doc.text(`Tax: $${Number(data.tax).toFixed(2)}`, { align: "right" });
-    doc.fontSize(14).text(`Total Amount: $${Number(data.total).toFixed(2)} ${data.currency}`, { align: "right" });
+    const curr = data.currency === "USD" ? "INR" : (data.currency || "INR");
+    doc.text(`Subtotal: ${curr} ${Number(data.subtotal).toFixed(2)}`, { align: "right" });
+    doc.text(`Tax: ${curr} ${Number(data.tax).toFixed(2)}`, { align: "right" });
+    doc.fontSize(14).text(`Total Amount: ${curr} ${Number(data.total).toFixed(2)}`, { align: "right" });
 
     doc.end();
   });

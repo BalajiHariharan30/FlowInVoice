@@ -665,9 +665,10 @@ export class POProcessingWorkflow {
 
       doc.moveDown();
       doc.font("Helvetica-Bold");
-      doc.text(`Subtotal: $${data.subtotal.toFixed(2)}`, { align: "right" });
-      doc.text(`Tax: $${data.tax.toFixed(2)}`, { align: "right" });
-      doc.fontSize(14).text(`Total Amount: $${data.total.toFixed(2)} ${data.currency}`, { align: "right" });
+      const curr = data.currency === "USD" ? "INR" : (data.currency || "INR");
+      doc.text(`Subtotal: ${curr} ${data.subtotal.toFixed(2)}`, { align: "right" });
+      doc.text(`Tax: ${curr} ${data.tax.toFixed(2)}`, { align: "right" });
+      doc.fontSize(14).text(`Total Amount: ${curr} ${data.total.toFixed(2)}`, { align: "right" });
 
       doc.end();
     });

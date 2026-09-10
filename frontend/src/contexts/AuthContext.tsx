@@ -91,8 +91,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const res = await apiClient.get<AuthUser>("/auth/me");
         setUser(res.data);
         localStorage.setItem("user", JSON.stringify(res.data));
-      } catch (err) {
-        logout();
+      } catch (err: any) {
+        // Only log out if backend explicitly returns 401 (token truly invalid/expired)
+        // Network timeouts, cold-start delays, or 502s should NOT log out the user
+        if (err?.status === 401 || err?.response?.status === 401) {
+          logout();
+        }
       } finally {
         setIsLoading(false);
       }

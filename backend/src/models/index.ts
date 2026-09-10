@@ -25,7 +25,7 @@ const CustomerSchema = new Schema<ICustomer>(
     email: { type: String, required: true },
     gstNumber: { type: String, required: true },
     paymentTerms: { type: String, default: "NET_30" },
-    currency: { type: String, default: "USD" },
+    currency: { type: String, default: "INR" },
     address: { type: String, default: "" }
   },
   { timestamps: true }
@@ -156,7 +156,7 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       default: "UPLOADED",
       index: true
     },
-    currency: { type: String, default: "USD" },
+    currency: { type: String, default: "INR" },
     issueDate: { type: Date, default: Date.now },
     deliveryDate: { type: Date },
     paymentTerms: { type: String, default: "NET_30" },
@@ -251,7 +251,7 @@ const InvoiceSchema = new Schema<IInvoice>(
       default: "DRAFT",
       index: true
     },
-    currency: { type: String, default: "USD" },
+    currency: { type: String, default: "INR" },
     issueDate: { type: Date, default: Date.now },
     dueDate: { type: Date, required: true },
     paymentTerms: { type: String, default: "NET_30" },
