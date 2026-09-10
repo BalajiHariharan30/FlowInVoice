@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
-import jwt from "jsonwebtoken";
 import { createApp } from "../src/app.js";
+import { AuthService } from "../src/auth/jwt.js";
 import {
   PurchaseOrderRepository,
   ReviewRepository,
@@ -12,20 +12,14 @@ import {
 import { QdrantService } from "../src/rag/qdrant.service.js";
 import { ReanalysisService } from "../src/ai/workflow/reanalysis.service.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "test-jwt-secret-min-32-chars-long!!";
-
-function generateAuthToken(tenantId: string, role = "REVIEWER"): string {
-  return jwt.sign(
-    {
-      id: "usr_reviewer_1",
-      tenantId,
-      email: "reviewer@enterprise.com",
-      role,
-      name: "Reviewer User"
-    },
-    JWT_SECRET,
-    { expiresIn: "1h" }
-  );
+function generateAuthToken(tenantId: string, role: any = "REVIEWER"): string {
+  return AuthService.generateTokens({
+    id: "usr_reviewer_1",
+    tenantId,
+    email: "reviewer@enterprise.com",
+    role,
+    name: "Reviewer User"
+  }).accessToken;
 }
 
 describe("Rejection Re-Analysis Routine & Discrepancy Aggregation (§Bug 1)", () => {

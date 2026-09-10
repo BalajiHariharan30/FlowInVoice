@@ -6,7 +6,7 @@ export function formatCurrency(
   const num = typeof amount === "string" ? parseFloat(amount) : amount;
   if (isNaN(num)) return "₹0.00";
 
-  const targetCurrency = currency === "USD" ? "INR" : (currency || "INR");
+  const targetCurrency = currency || "INR";
 
   return new Intl.NumberFormat(locale || "en-IN", {
     style: "currency",
