@@ -49,9 +49,10 @@ export const Sidebar: React.FC = () => {
 
       {/* Navigation Links */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto bg-[#010308]">
-        <div className="px-3 pb-2 text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">
+        <div className="px-3 pb-2 text-[10px] font-mono uppercase tracking-wider text-slate-400 font-bold">
           Platform Operations
         </div>
+
         {navItems.map((item) => {
           const Icon = item.icon;
           return (

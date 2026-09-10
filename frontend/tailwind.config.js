@@ -26,7 +26,7 @@ export default {
           card: "#FFFFFF",
           border: "#E5E7EB",
           text: "#111827",
-          muted: "#667085",
+          muted: "#475467",
           hover: "#F3F4F6",
           subtle: "#F9FAFB"
         },
@@ -34,25 +34,26 @@ export default {
         accent: {
           primary: "#1841C9",
           hover: "#1435A8",
-          secondary: "#4997C6",
+          secondary: "#2563EB",
           subtle: "#EEF2FF",
           border: "#C7D2FE"
         },
-        // Semantic
+        // Semantic (WCAG AA Compliant >= 4.5:1 on light surfaces)
         semantic: {
-          success: "#16A34A",
+          success: "#15803D",
           "success-bg": "#F0FDF4",
           "success-border": "#BBF7D0",
-          warning: "#D97706",
+          warning: "#B45309",
           "warning-bg": "#FFFBEB",
           "warning-border": "#FDE68A",
-          error: "#DC2626",
+          error: "#B91C1C",
           "error-bg": "#FEF2F2",
           "error-border": "#FECACA",
-          info: "#2563EB",
+          info: "#1D4ED8",
           "info-bg": "#EFF6FF",
           "info-border": "#BFDBFE"
         }
+
       },
       fontFamily: {
         sans: ["Inter", "Geist", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],

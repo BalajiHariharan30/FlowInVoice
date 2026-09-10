@@ -1,0 +1,14 @@
+# FlowInvoice AI
+
+> Enterprise Autonomous B2B Purchase Order to Invoice Platform
+
+FlowInvoice AI autonomously processes inbound purchase orders using multi-agent orchestration, statutory tax compliance (Indian GST 18%), and ERP ledger integration.
+
+## Key Resources and Entry Points
+
+- [Platform Dashboard](https://flow-in-voice.vercel.app/dashboard): Real-time autonomous workflow monitor, SLA accuracy KPIs, and throughput trends.
+- [Purchase Orders Directory](https://flow-in-voice.vercel.app/pos): Comprehensive repository of inbound purchase orders, extraction confidence, and document statuses.
+- [Purchase Order Ingestion](https://flow-in-voice.vercel.app/pos/upload): Secure document upload dropzone supporting PDF, PNG, and JPEG documents.
+- [Generated Invoices](https://flow-in-voice.vercel.app/invoices): Itemized, canonical PDF invoices generated from approved purchase orders.
+- [Review Center](https://flow-in-voice.vercel.app/reviews): Human-in-the-loop review interface for exceptions, price variances, and document ambiguities.
+- [System Architecture Docs](https://flow-in-voice.vercel.app/docs): Technical specifications, 8-node agent pipeline documentation, and OpenAPI schemas.

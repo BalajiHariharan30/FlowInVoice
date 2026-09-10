@@ -160,9 +160,12 @@ export const PDFDocumentViewer: React.FC<PDFDocumentViewerProps> = ({
               key={documentUrl || po?.id || poId || poNumber}
               src={documentUrl}
               alt={documentName}
+              width={800}
+              height={1000}
               className="max-w-full max-h-full object-contain rounded-lg shadow border border-workspace-border"
             />
           )}
+
         </div>
       ) : (
         <div className="flex-1 bg-slate-100/80 p-4 sm:p-6 overflow-auto flex justify-center items-start">

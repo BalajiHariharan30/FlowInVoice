@@ -212,7 +212,8 @@ export const DashboardPage: React.FC = () => {
             <select
               value={dateRange}
               onChange={(e) => setDateRange(e.target.value)}
-              className="bg-transparent border-none outline-none text-workspace-text text-xs cursor-pointer"
+              aria-label="Filter by time period"
+              className="bg-transparent border-none outline-none text-workspace-text text-xs cursor-pointer font-medium"
             >
               <option value="today">Today</option>
               <option value="7d">Last 7 Days</option>
@@ -227,7 +228,8 @@ export const DashboardPage: React.FC = () => {
             <select
               value={selectedCustomer}
               onChange={(e) => setSelectedCustomer(e.target.value)}
-              className="bg-transparent border-none outline-none text-workspace-text text-xs cursor-pointer"
+              aria-label="Filter by customer"
+              className="bg-transparent border-none outline-none text-workspace-text text-xs cursor-pointer font-medium"
             >
               <option value="all">All Customers</option>
               <option value="acme">Acme Technologies</option>
@@ -235,6 +237,7 @@ export const DashboardPage: React.FC = () => {
               <option value="globex">Globex Corp</option>
             </select>
           </div>
+
 
           {/* Export Button */}
           <button
@@ -359,14 +362,15 @@ export const DashboardPage: React.FC = () => {
                   <div className="font-semibold text-workspace-text flex items-center space-x-2">
                     <span>{item.customer}</span>
                     <span
-                      className={`text-[10px] px-1.5 py-0.2 rounded font-bold font-mono ${
+                      className={`text-[10px] px-2 py-0.5 rounded font-bold font-mono ${
                         item.severity === "HIGH"
-                          ? "bg-red-100 text-semantic-error border border-red-200"
-                          : "bg-amber-100 text-amber-800 border border-amber-200"
+                          ? "bg-red-100 text-red-900 border border-red-300"
+                          : "bg-amber-100 text-amber-900 border border-amber-300"
                       }`}
                     >
                       {item.severity}
                     </span>
+
                   </div>
                   <p className="text-workspace-muted text-[11px] mt-0.5">{item.exception}</p>
                 </div>

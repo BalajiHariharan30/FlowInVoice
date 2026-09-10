@@ -598,9 +598,11 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
             <select
               value={selectedPoId}
               onChange={(e) => handleSwitchPO(e.target.value)}
+              aria-label="Switch active purchase order in workflow monitor"
               className="bg-dark-secondary text-white text-xs font-bold rounded px-2 py-1 border border-dark-border outline-none focus:border-accent-secondary cursor-pointer max-w-[190px] truncate"
               title="Switch which purchase order to trace in the live pipeline"
             >
+
               {availablePOs.length > 0 ? (
                 <>
                   <optgroup label="Uploaded Purchase Orders">
@@ -757,13 +759,14 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
                   />
                 </div>
                 <div className="font-semibold text-xs leading-tight">{node.name}</div>
-                <div className="text-[10px] text-slate-400 font-mono truncate mt-0.5" title={node.agent}>
+                <div className="text-[10px] text-slate-300 font-mono truncate mt-0.5" title={node.agent}>
                   {node.agent}
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono truncate">
+                <div className="text-[9px] text-slate-300 font-mono truncate">
                   {node.model}
                 </div>
               </div>
+
 
               <div className="mt-3 pt-2 border-t border-dark-border/40 flex items-center justify-between text-[10px] font-mono">
                 <span
@@ -839,7 +842,7 @@ export const LiveAgentWorkflowMonitor: React.FC = () => {
             <div className="space-y-1.5 max-h-16 overflow-hidden">
               {logs.slice(0, 2).map((log) => (
                 <div key={log.id} className="flex items-start space-x-2 text-[11px] leading-tight truncate">
-                  <span className="text-slate-500 shrink-0">[{log.timestamp}]</span>
+                  <span className="text-slate-400 shrink-0">[{log.timestamp}]</span>
                   <span className="text-accent-secondary font-semibold shrink-0">{log.agent}:</span>
                   <span className="text-slate-300 truncate">{log.message}</span>
                 </div>
