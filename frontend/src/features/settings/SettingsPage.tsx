@@ -26,7 +26,7 @@ export const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<"org" | "team" | "rbac" | "ai" | "notifications">("org");
 
   // Organization state
-  const [orgName, setOrgName] = useState("Acme Technologies Inc.");
+  const [orgName, setOrgName] = useState("FlowInvoice AI");
   const [tenantId, setTenantId] = useState("tenant_default");
   const [gstNumber, setGstNumber] = useState("29AABCU9603R1ZM");
   const [currency, setCurrency] = useState("INR");

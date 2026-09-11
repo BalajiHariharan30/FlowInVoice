@@ -1,32 +1,21 @@
-import React, { useState } from "react";
+import React from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
-import {
-  Search,
-  Building2,
-  Bell,
-  ChevronDown,
-  Sparkles,
-  HelpCircle,
-  ShieldCheck
-} from "lucide-react";
+import { Search, Bell } from "lucide-react";
 
 interface NavbarProps {
   onOpenCommandPalette?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenCommandPalette }) => {
-  const { user, activeTenant, setTenant } = useAuth();
+  const { user } = useAuth();
   const location = useLocation();
-  const [showTenantDropdown, setShowTenantDropdown] = useState(false);
 
   // Generate breadcrumb from pathname
   const pathSegments = location.pathname.split("/").filter(Boolean);
   const currentSection = pathSegments[0]
     ? pathSegments[0].toUpperCase().replace(/-/g, " ")
     : "DASHBOARD";
-
-  const tenants = ["Acme Corporation", "Globex Industries", "Stark Enterprises", "Wayne Holdings"];
 
   return (
     <header className="h-14 bg-[#010308] border-b border-[#1D2430] flex items-center justify-between px-6 sticky top-0 z-20 shadow-md">
@@ -61,40 +50,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenCommandPalette }) => {
           <span>AI Systems Operational</span>
         </div>
 
-        {/* Multi-Tenancy Selector Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setShowTenantDropdown(!showTenantDropdown)}
-            className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-[#0A0D14] hover:bg-[#171D2A] border border-[#1D2430] text-xs text-slate-200 transition"
-          >
-            <Building2 className="w-3.5 h-3.5 text-accent-secondary" />
-            <span className="font-semibold max-w-[120px] truncate">{activeTenant}</span>
-            <ChevronDown className="w-3 h-3 text-slate-400" />
-          </button>
-
-          {showTenantDropdown && (
-            <div className="absolute right-0 mt-1.5 w-48 bg-[#0A0D14] border border-[#1D2430] rounded-xl shadow-2xl py-1 z-50 text-xs">
-              <div className="px-3 py-1 text-[10px] uppercase font-mono text-slate-400 font-bold">
-                Switch Organization
-              </div>
-              {tenants.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => {
-                    setTenant(t);
-                    setShowTenantDropdown(false);
-                  }}
-                  className={`w-full text-left px-3 py-1.5 hover:bg-[#171D2A] transition flex items-center justify-between ${
-                    t === activeTenant ? "text-accent-secondary font-bold" : "text-slate-300"
-                  }`}
-                >
-                  <span className="truncate">{t}</span>
-                  {t === activeTenant && <span className="w-1.5 h-1.5 rounded-full bg-accent-primary" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
 
         {/* Notifications Icon */}
         <button
