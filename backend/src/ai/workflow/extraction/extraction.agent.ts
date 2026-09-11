@@ -22,25 +22,23 @@ export function createExtractionNode(tenantId: string) {
       throw new Error(`PO not found for ID: ${state.poId}`);
     }
 
-    if (!state.isHumanApproved && po.status !== "HUMAN_APPROVED") {
-      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "PROCESSING");
-    }
+    const hasPreExtractedData =
+      Array.isArray(po.lineItems) &&
+      po.lineItems.length > 0 &&
+      po.poNumber &&
+      !po.poNumber.startsWith("PENDING-");
 
-    // If human reviewer verified/corrected extraction, preserve verified data
+    // If human reviewer verified/corrected extraction or PO is already extracted with line items, preserve data
     const isHumanVerified =
       Boolean(state.isHumanApproved) ||
       po.status === "HUMAN_APPROVED" ||
       Boolean(po.humanReviewedAt) ||
+      po.status === "EXTRACTED" ||
+      hasPreExtractedData ||
       po.extractionConfidence === 1.0;
 
-    if (
-      isHumanVerified &&
-      Array.isArray(po.lineItems) &&
-      po.lineItems.length > 0 &&
-      po.poNumber &&
-      !po.poNumber.startsWith("PENDING-")
-    ) {
-      logger.info({ tenantId, poId: state.poId }, "ExtractionAgent: Human-verified extraction detected, preserving corrected line items");
+    if (isHumanVerified && hasPreExtractedData) {
+      logger.info({ tenantId, poId: state.poId }, "ExtractionAgent: Human-verified/pre-extracted data detected, preserving line items");
       const humanVerified: ExtractedPOData = {
         poNumber: po.poNumber,
         customerName: po.customerName,
@@ -52,7 +50,7 @@ export function createExtractionNode(tenantId: string) {
         tax: po.tax || 0,
         discount: po.discount || 0,
         totalAmount: po.totalAmount || 0,
-        confidence: 1.0,
+        confidence: po.extractionConfidence ?? 1.0,
         lineItems: po.lineItems
       };
       return {
@@ -60,6 +58,10 @@ export function createExtractionNode(tenantId: string) {
         status: "EXTRACTED",
         extractedData: humanVerified
       };
+    }
+
+    if (!state.isHumanApproved && po.status !== "HUMAN_APPROVED") {
+      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "PROCESSING");
     }
 
     // Retrieve buffer from S3 (or mock storage)
@@ -138,9 +140,16 @@ export function createExtractionNode(tenantId: string) {
         summary: `Extracted PO ${extracted.poNumber} with ${extracted.lineItems.length} line items (confidence: ${(extracted.confidence * 100).toFixed(1)}%)`
       });
 
+      const isConfidenceLow = (extracted.confidence ?? 1.0) < 0.75;
+      const extractionErrors = isConfidenceLow
+        ? [`Low extraction confidence: ${(extracted.confidence * 100).toFixed(1)}%`]
+        : [];
+
       return {
         extractedData: extracted,
         customerName: extracted.customerName,
+        validationErrors: extractionErrors,
+        isBusinessException: isConfidenceLow,
         status: "EXTRACTED",
         currentStep: "extraction"
       };
