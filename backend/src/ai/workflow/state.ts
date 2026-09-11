@@ -155,6 +155,14 @@ export const WorkflowStateAnnotation = Annotation.Root({
   technicalError: Annotation<string | undefined>({
     reducer: (_, update) => update,
     default: () => undefined
+  }),
+  isHumanApproved: Annotation<boolean>({
+    reducer: (curr, update) => curr || update,
+    default: () => false
+  }),
+  skipValidation: Annotation<boolean>({
+    reducer: (curr, update) => curr || update,
+    default: () => false
   })
 });
 

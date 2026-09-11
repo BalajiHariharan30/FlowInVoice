@@ -9,6 +9,7 @@ import {
   PurchaseOrderRepository,
   InvoiceRepository,
   ReviewRepository,
+  reconcileTaxFromLineItems,
   ValidationResultRepository,
   AuditRepository,
   CustomerRepository,
@@ -43,6 +44,35 @@ export class POProcessingWorkflow {
 
     logger.info({ tenantId, poId, status: po.status }, "Starting/resuming PO workflow");
 
+    // HUMAN REVIEW GATE (Generic Node Logic)
+    const review = await ReviewRepository.findLatestByEntityId(tenantId, poId);
+
+    if (review?.status === "REJECTED" || po.status === "REJECTED") {
+      logger.info({ tenantId, poId }, "Human Review Gate: PO is marked REJECTED; halting workflow execution");
+      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "REJECTED", {
+        terminatedAt: new Date(),
+        terminationReason: review?.reason || "Rejected in human review"
+      });
+      if (review) {
+        await ReviewRepository.closeDuplicatePendingTickets(tenantId, poId, review._id.toString());
+      }
+      return;
+    }
+
+    if (review?.status === "APPROVED" || po.status === "HUMAN_APPROVED") {
+      logger.info({ tenantId, poId }, "Human Review Gate: PO human sign-off confirmed; reconciling tax and resuming to validation/invoicing");
+      const reconciledTax = reconcileTaxFromLineItems(po.lineItems);
+      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "HUMAN_APPROVED", {
+        extractionConfidence: 1.0,
+        humanReviewedAt: review?.resolvedAt || new Date(),
+        humanReviewedBy: review?.resolvedBy || "Human Reviewer",
+        ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+      });
+      if (review) {
+        await ReviewRepository.closeDuplicatePendingTickets(tenantId, poId, review._id.toString());
+      }
+    }
+
     try {
       // Step 1: Intake & Extraction if UPLOADED or PROCESSING
       if (po.status === "UPLOADED" || po.status === "PROCESSING") {
@@ -53,7 +83,7 @@ export class POProcessingWorkflow {
       let currentPo = await PurchaseOrderRepository.findById(tenantId, poId);
       if (!currentPo) return;
 
-      // Step 2: Verification if EXTRACTED
+      // Step 2: Verification if EXTRACTED (bypassed if already HUMAN_APPROVED)
       if (currentPo.status === "EXTRACTED") {
         const passed = await this.stepVerification(tenantId, poId, workflowId);
         if (!passed) return; // Paused at HUMAN_REVIEW or FAILED
@@ -63,11 +93,12 @@ export class POProcessingWorkflow {
       currentPo = await PurchaseOrderRepository.findById(tenantId, poId);
       if (!currentPo) return;
 
-      // Step 3: Business Validation & RAG if VALIDATING or APPROVED
+      // Step 3: Business Validation & RAG if VALIDATING or if human approved extraction stage
       if (
         currentPo.status === "VALIDATING" ||
         currentPo.status === "RAG_CHECKING" ||
-        currentPo.status === "COMPLIANCE_CHECKING"
+        currentPo.status === "COMPLIANCE_CHECKING" ||
+        (currentPo.status === "HUMAN_APPROVED" && review?.stage === "extraction")
       ) {
         const passed = await this.stepValidation(tenantId, poId, workflowId);
         if (!passed) return; // Paused at HUMAN_REVIEW
@@ -77,8 +108,8 @@ export class POProcessingWorkflow {
       currentPo = await PurchaseOrderRepository.findById(tenantId, poId);
       if (!currentPo) return;
 
-      // Step 4: Invoice Generation if APPROVED or INVOICE_GENERATING
-      if (currentPo.status === "APPROVED" || currentPo.status === "INVOICE_GENERATING") {
+      // Step 4: Invoice Generation if APPROVED, HUMAN_APPROVED, or INVOICE_GENERATING
+      if (currentPo.status === "APPROVED" || currentPo.status === "HUMAN_APPROVED" || currentPo.status === "INVOICE_GENERATING") {
         await this.stepInvoiceGeneration(tenantId, poId, workflowId);
       }
 
@@ -184,6 +215,11 @@ export class POProcessingWorkflow {
     const po = await PurchaseOrderRepository.findById(tenantId, poId);
     if (!po) return false;
 
+    if (po.status === "HUMAN_APPROVED" || po.status === "REJECTED") {
+      logger.info({ tenantId, poId, status: po.status }, "POProcessingWorkflow: Human review sign-off active; bypassing verification checks");
+      return true;
+    }
+
     const checks: Array<{ checkName: string; passed: boolean; message: string }> = [];
     const errors: string[] = [];
 
@@ -207,7 +243,25 @@ export class POProcessingWorkflow {
     if (!isSubtotalValid) errors.push(`Subtotal mismatch: expected ${calcSubtotal.toFixed(2)}, got ${po.subtotal}`);
 
     // Check 2: Total calculation with tax & discount
-    const expectedTotal = MoneyUtil.calculateTotal(po.subtotal, po.tax, po.discount);
+    let effectiveTax = po.tax;
+    const directExpectedTotal = MoneyUtil.calculateTotal(po.subtotal, po.tax, po.discount);
+    if (!MoneyUtil.equals(directExpectedTotal, po.totalAmount) && po.lineItems.length > 0) {
+      const lineTaxSum = po.lineItems.reduce((acc, item) => {
+        const lt = MoneyUtil.from(item.lineTotal);
+        const rate = (item.taxRate || 0) / 100;
+        return acc.plus(lt.times(rate));
+      }, MoneyUtil.from(0));
+
+      const lineTaxExpectedTotal = MoneyUtil.calculateTotal(po.subtotal, lineTaxSum, po.discount);
+      if (MoneyUtil.equals(lineTaxExpectedTotal, po.totalAmount)) {
+        logger.info({ tenantId, poId }, "POProcessingWorkflow: Reconciled tax from line items tax rates");
+        effectiveTax = MoneyUtil.toNumber(lineTaxSum);
+        po.tax = effectiveTax;
+        await PurchaseOrderRepository.updateExtraction(tenantId, poId, { tax: effectiveTax });
+      }
+    }
+
+    const expectedTotal = MoneyUtil.calculateTotal(po.subtotal, effectiveTax, po.discount);
     const isTotalValid = MoneyUtil.equals(expectedTotal, po.totalAmount);
     checks.push({
       checkName: "TOTAL_AMOUNT_CHECK",

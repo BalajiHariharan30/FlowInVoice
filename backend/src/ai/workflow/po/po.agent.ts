@@ -4,7 +4,8 @@ import { AgentTools } from "../../../tools/index.js";
 import {
   ValidationResultRepository,
   AuditRepository,
-  PurchaseOrderRepository
+  PurchaseOrderRepository,
+  ReviewRepository
 } from "../../../repositories/index.js";
 import { logger } from "../../../utils/logger.js";
 
@@ -16,6 +17,18 @@ export function createPOValidationNode(tenantId: string) {
   return async (state: WorkflowState): Promise<Partial<WorkflowState>> => {
     logger.info({ tenantId, poId: state.poId }, "POValidationAgent: Performing math and uniqueness checks");
     const startTime = Date.now();
+
+    const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
+
+    // Human sign-off defense: stop treating human-approved PO as a fresh input
+    if (state.skipValidation || state.isHumanApproved || po?.status === "HUMAN_APPROVED" || po?.status === "REJECTED") {
+      logger.info({ tenantId, poId: state.poId, status: po?.status }, "POValidationAgent: Human review sign-off active; bypassing automated checks");
+      return {
+        currentStep: "po_validation",
+        validationErrors: [],
+        isBusinessException: false
+      };
+    }
 
     const data = state.extractedData;
     if (!data) {
@@ -53,7 +66,26 @@ export function createPOValidationNode(tenantId: string) {
     }
 
     // Check 2: Total calculation with tax & discount
-    const expectedTotal = MoneyUtil.calculateTotal(data.subtotal, data.tax, data.discount);
+    // Deterministic tax reconciliation if line items tax rates reconcile total
+    let effectiveTax = data.tax;
+    const directExpectedTotal = MoneyUtil.calculateTotal(data.subtotal, data.tax, data.discount);
+    if (!MoneyUtil.equals(directExpectedTotal, data.totalAmount) && data.lineItems.length > 0) {
+      const lineTaxSum = data.lineItems.reduce((acc, item) => {
+        const lt = MoneyUtil.from(item.lineTotal);
+        const rate = (item.taxRate || 0) / 100;
+        return acc.plus(lt.times(rate));
+      }, MoneyUtil.from(0));
+
+      const lineTaxExpectedTotal = MoneyUtil.calculateTotal(data.subtotal, lineTaxSum, data.discount);
+      if (MoneyUtil.equals(lineTaxExpectedTotal, data.totalAmount)) {
+        logger.info({ tenantId, poId: state.poId }, "POValidationAgent: Reconciled tax from line items tax rates");
+        effectiveTax = MoneyUtil.toNumber(lineTaxSum);
+        data.tax = effectiveTax;
+        await PurchaseOrderRepository.updateExtraction(tenantId, state.poId, { tax: effectiveTax });
+      }
+    }
+
+    const expectedTotal = MoneyUtil.calculateTotal(data.subtotal, effectiveTax, data.discount);
     const isTotalValid = MoneyUtil.equals(expectedTotal, data.totalAmount);
     checks.push({
       checkName: "TOTAL_AMOUNT_CHECK",

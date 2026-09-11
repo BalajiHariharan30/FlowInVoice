@@ -22,13 +22,20 @@ export function createExtractionNode(tenantId: string) {
       throw new Error(`PO not found for ID: ${state.poId}`);
     }
 
-    await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "PROCESSING");
+    if (!state.isHumanApproved && po.status !== "HUMAN_APPROVED") {
+      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "PROCESSING");
+    }
 
     // If human reviewer verified/corrected extraction, preserve verified data
+    const isHumanVerified =
+      Boolean(state.isHumanApproved) ||
+      po.status === "HUMAN_APPROVED" ||
+      po.extractionConfidence === 1.0;
+
     if (
       po.lineItems &&
       po.lineItems.length > 0 &&
-      po.extractionConfidence === 1.0 &&
+      isHumanVerified &&
       po.poNumber &&
       !po.poNumber.startsWith("PENDING-")
     ) {
@@ -37,7 +44,7 @@ export function createExtractionNode(tenantId: string) {
         poNumber: po.poNumber,
         customerName: po.customerName,
         gstNumber: po.gstNumber || "",
-        currency: po.currency || "USD",
+        currency: po.currency || "INR",
         paymentTerms: po.paymentTerms || "NET_30",
         issueDate: po.issueDate ? new Date(po.issueDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
         subtotal: po.subtotal || 0,

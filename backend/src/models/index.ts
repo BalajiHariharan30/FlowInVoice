@@ -125,6 +125,10 @@ export interface IPurchaseOrder extends Document {
   retryCount: number;
   failureReason?: string;
   workflowId?: string;
+  humanReviewedAt?: Date;
+  humanReviewedBy?: string;
+  terminatedAt?: Date;
+  terminationReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -146,6 +150,7 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
         "RAG_CHECKING",
         "COMPLIANCE_CHECKING",
         "HUMAN_REVIEW",
+        "HUMAN_APPROVED",
         "APPROVED",
         "REJECTED",
         "INVOICE_GENERATING",
@@ -174,7 +179,11 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
     lineItems: [POLineItemSchema],
     retryCount: { type: Number, default: 0 },
     failureReason: { type: String },
-    workflowId: { type: String }
+    workflowId: { type: String },
+    humanReviewedAt: { type: Date },
+    humanReviewedBy: { type: String },
+    terminatedAt: { type: Date },
+    terminationReason: { type: String }
   },
   { timestamps: true }
 );
@@ -335,6 +344,7 @@ export interface IHumanReview extends Document {
   discrepancyReport?: IDiscrepancyItem[];
   assignedTo?: string;
   resolutionNotes?: string;
+  rejectionReason?: string;
   resolvedBy?: string;
   resolvedAt?: Date;
   createdAt: Date;
@@ -357,6 +367,7 @@ const HumanReviewSchema = new Schema<IHumanReview>(
     discrepancyReport: [DiscrepancyItemSchema],
     assignedTo: { type: String },
     resolutionNotes: { type: String },
+    rejectionReason: { type: String },
     resolvedBy: { type: String },
     resolvedAt: { type: Date }
   },

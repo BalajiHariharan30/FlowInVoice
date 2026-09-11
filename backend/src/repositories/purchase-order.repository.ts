@@ -60,6 +60,31 @@ export class PurchaseOrderRepository {
     return doc;
   }
 
+  static async updateHumanReviewStatus(
+    tenantId: string,
+    id: string,
+    status: POStatus,
+    extra: {
+      humanReviewedAt?: Date;
+      humanReviewedBy?: string;
+      terminatedAt?: Date;
+      terminationReason?: string;
+      failureReason?: string;
+      extractionConfidence?: number;
+      tax?: number;
+    } = {}
+  ): Promise<IPurchaseOrder | null> {
+    const updatePayload: any = { status, ...extra, updatedAt: new Date() };
+    if (isDbConnected()) {
+      if (!mongoose.isValidObjectId(id)) return null;
+      return PurchaseOrder.findOneAndUpdate({ tenantId, _id: id }, { $set: updatePayload }, { new: true });
+    }
+    const doc = inMemory.pos.get(id);
+    if (!doc || doc.tenantId !== tenantId) return null;
+    Object.assign(doc, updatePayload);
+    return doc;
+  }
+
   static async updateExtraction(
     tenantId: string,
     id: string,

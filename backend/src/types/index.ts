@@ -8,6 +8,7 @@ export type POStatus =
   | "RAG_CHECKING"
   | "COMPLIANCE_CHECKING"
   | "HUMAN_REVIEW"
+  | "HUMAN_APPROVED"
   | "APPROVED"
   | "REJECTED"
   | "INVOICE_GENERATING"

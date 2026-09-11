@@ -14,6 +14,17 @@ export function createApprovalDecisionNode(tenantId: string) {
     logger.info({ tenantId, poId: state.poId }, "ApprovalDecisionAgent: Evaluating approval criteria");
     const startTime = Date.now();
 
+    if (state.isHumanApproved) {
+      logger.info({ tenantId, poId: state.poId }, "ApprovalDecisionAgent: Human approval already granted; proceeding to posting");
+      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, state.poId, "HUMAN_APPROVED");
+      return {
+        approvalRequired: false,
+        isBusinessException: false,
+        status: "APPROVED",
+        currentStep: "approval_decision"
+      };
+    }
+
     const hasValidationErrors = (state.validationErrors || []).length > 0;
     const approvalRequired = state.approvalRequired || hasValidationErrors;
 

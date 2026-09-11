@@ -385,69 +385,97 @@ Rules:
 
     const parsed = JSON.parse(jsonMatch[0]);
 
-    // Sanitize fields before Zod validation to ensure resilience
-    if (!parsed.issueDate || typeof parsed.issueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.issueDate)) {
-      parsed.issueDate = new Date().toISOString().split("T")[0];
-    }
-    if (!parsed.currency) {
-      parsed.currency = "INR";
-    }
-    if (!parsed.paymentTerms) {
-      parsed.paymentTerms = "NET_30";
-    }
-    if (parsed.deliveryDate === "" || parsed.deliveryDate === null) {
-      delete parsed.deliveryDate;
-    }
-    if (!parsed.poNumber) {
-      parsed.poNumber = `PO-${Date.now().toString().slice(-6)}`;
-    }
-    if (!parsed.customerName) {
-      parsed.customerName = "Enterprise Customer";
-    }
-    if (typeof parsed.confidence !== "number") {
-      parsed.confidence = 0.96;
-    }
-    if (typeof parsed.subtotal !== "number") {
-      parsed.subtotal = Number(parsed.subtotal) || 0;
-    }
-    if (typeof parsed.tax !== "number") {
-      parsed.tax = Number(parsed.tax) || 0;
-    }
-    if (typeof parsed.discount !== "number") {
-      parsed.discount = Number(parsed.discount) || 0;
-    }
-    if (typeof parsed.totalAmount !== "number") {
-      parsed.totalAmount = Number(parsed.totalAmount) || (parsed.subtotal + parsed.tax);
-    }
-    if (Array.isArray(parsed.lineItems) && parsed.lineItems.length > 0) {
-      parsed.lineItems = parsed.lineItems.map((li: any, idx: number) => ({
-        lineNumber: typeof li.lineNumber === "number" ? li.lineNumber : idx + 1,
-        productCode: li.productCode || `ITEM-${idx + 1}`,
-        description: li.description || "Purchase Order Item",
-        quantity: typeof li.quantity === "number" ? li.quantity : Number(li.quantity) || 1,
-        unitPrice: typeof li.unitPrice === "number" ? li.unitPrice : Number(li.unitPrice) || 0,
-        lineTotal: typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0,
-        taxRate: typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0,
-        gstNumber: li.gstNumber || parsed.gstNumber || ""
-      }));
-    } else {
-      parsed.lineItems = [
-        {
-          lineNumber: 1,
-          productCode: "ITEM-1",
-          description: "Purchase Order Line Item",
-          quantity: 1,
-          unitPrice: parsed.subtotal || parsed.totalAmount || 1000,
-          lineTotal: parsed.subtotal || parsed.totalAmount || 1000,
-          taxRate: 18,
-          gstNumber: parsed.gstNumber || ""
-        }
-      ];
-    }
-
-    return PurchaseOrderExtractionSchema.parse(parsed);
+    // Sanitize and reconcile fields before Zod validation to ensure resilience against arithmetic hallucinations
+    return sanitizeAndReconcileExtractedPO(parsed);
   }
 }
+
+/**
+ * Normalizes and deterministically reconciles extracted PO data against LLM arithmetic errors.
+ */
+export function sanitizeAndReconcileExtractedPO(parsed: any): ExtractedPOData {
+  if (!parsed.issueDate || typeof parsed.issueDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.issueDate)) {
+    parsed.issueDate = new Date().toISOString().split("T")[0];
+  }
+  if (!parsed.currency) {
+    parsed.currency = "INR";
+  }
+  if (!parsed.paymentTerms) {
+    parsed.paymentTerms = "NET_30";
+  }
+  if (parsed.deliveryDate === "" || parsed.deliveryDate === null) {
+    delete parsed.deliveryDate;
+  }
+  if (!parsed.poNumber) {
+    parsed.poNumber = `PO-${Date.now().toString().slice(-6)}`;
+  }
+  if (!parsed.customerName) {
+    parsed.customerName = "Enterprise Customer";
+  }
+  if (typeof parsed.confidence !== "number") {
+    parsed.confidence = 0.96;
+  }
+  if (typeof parsed.subtotal !== "number") {
+    parsed.subtotal = Number(parsed.subtotal) || 0;
+  }
+  if (typeof parsed.tax !== "number") {
+    parsed.tax = Number(parsed.tax) || 0;
+  }
+  if (typeof parsed.discount !== "number") {
+    parsed.discount = Number(parsed.discount) || 0;
+  }
+  if (typeof parsed.totalAmount !== "number") {
+    parsed.totalAmount = Number(parsed.totalAmount) || (parsed.subtotal + parsed.tax);
+  }
+
+  if (Array.isArray(parsed.lineItems) && parsed.lineItems.length > 0) {
+    parsed.lineItems = parsed.lineItems.map((li: any, idx: number) => ({
+      lineNumber: typeof li.lineNumber === "number" ? li.lineNumber : idx + 1,
+      productCode: li.productCode || `ITEM-${idx + 1}`,
+      description: li.description || "Purchase Order Item",
+      quantity: typeof li.quantity === "number" ? li.quantity : Number(li.quantity) || 1,
+      unitPrice: typeof li.unitPrice === "number" ? li.unitPrice : Number(li.unitPrice) || 0,
+      lineTotal: typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0,
+      taxRate: typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0,
+      gstNumber: li.gstNumber || parsed.gstNumber || ""
+    }));
+
+    // Deterministic arithmetic reconciliation for LLM hallucinations
+    if (parsed.subtotal && parsed.totalAmount) {
+      const lineTaxesSum = parsed.lineItems.reduce((acc: number, li: any) => {
+        const lt = typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0;
+        const tr = typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0;
+        return acc + (lt * tr / 100);
+      }, 0);
+
+      // If sum of line item taxes matches the difference between total and subtotal, use it
+      if (lineTaxesSum > 0 && Math.abs((parsed.subtotal + lineTaxesSum - (parsed.discount || 0)) - parsed.totalAmount) < 1.0) {
+        parsed.tax = Number(lineTaxesSum.toFixed(2));
+      } else if (Math.abs((parsed.subtotal + (parsed.tax || 0) - (parsed.discount || 0)) - parsed.totalAmount) > 0.01) {
+        const reconciledTax = parsed.totalAmount - parsed.subtotal + (parsed.discount || 0);
+        if (reconciledTax >= 0) {
+          parsed.tax = Number(reconciledTax.toFixed(2));
+        }
+      }
+    }
+  } else {
+    parsed.lineItems = [
+      {
+        lineNumber: 1,
+        productCode: "ITEM-1",
+        description: "Purchase Order Line Item",
+        quantity: 1,
+        unitPrice: parsed.subtotal || parsed.totalAmount || 1000,
+        lineTotal: parsed.subtotal || parsed.totalAmount || 1000,
+        taxRate: 18,
+        gstNumber: parsed.gstNumber || ""
+      }
+    ];
+  }
+
+  return PurchaseOrderExtractionSchema.parse(parsed);
+}
+
 
 /**
  * Real Multimodal Document Extractor using Google Gemini Vision (gemini-1.5-flash / gemini-1.5-pro).
@@ -573,7 +601,7 @@ Rules:
     }
 
     const parsed = JSON.parse(candidateText);
-    return PurchaseOrderExtractionSchema.parse(parsed);
+    return sanitizeAndReconcileExtractedPO(parsed);
   }
 }
 
@@ -663,7 +691,7 @@ export class MistralOCRProvider implements DocumentExtractor {
     }
 
     const parsed = JSON.parse(contentStr);
-    return PurchaseOrderExtractionSchema.parse(parsed);
+    return sanitizeAndReconcileExtractedPO(parsed);
   }
 }
 

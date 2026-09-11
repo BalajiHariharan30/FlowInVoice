@@ -10,7 +10,9 @@ import { createExceptionNode } from "./exception/exception.agent.js";
 import { createPostingNode } from "./posting/posting.agent.js";
 import {
   PurchaseOrderRepository,
-  AuditRepository
+  AuditRepository,
+  ReviewRepository,
+  reconcileTaxFromLineItems
 } from "../../repositories/index.js";
 import { logger } from "../../utils/logger.js";
 
@@ -55,6 +57,9 @@ export function buildOrchestrationGraph(tenantId: string) {
 
   // Router 2: PO Validation -> Policy or Exception
   const shouldContinueAfterPOValidation = (state: WorkflowState): "policyEvaluation" | "exception" => {
+    if (state.isHumanApproved || state.skipValidation) {
+      return "policyEvaluation";
+    }
     if (
       (state.validationErrors && state.validationErrors.length > 0) ||
       state.isBusinessException
@@ -67,6 +72,9 @@ export function buildOrchestrationGraph(tenantId: string) {
 
   // Router 3: Approval Decision -> Posting or Exception
   const shouldContinueAfterApproval = (state: WorkflowState): "posting" | "exception" => {
+    if (state.isHumanApproved) {
+      return "posting";
+    }
     if (state.approvalRequired || state.isBusinessException) {
       logger.info({ poId: state.poId }, "Router: Routing from Approval Decision to Exception");
       return "exception";
@@ -137,6 +145,45 @@ export async function runOrchestrationWorkflow(
     await PurchaseOrderRepository.updateExtraction(tenantId, poId, { workflowId });
   }
 
+  // HUMAN REVIEW GATE (Generic Node Logic)
+  const review = await ReviewRepository.findLatestByEntityId(tenantId, poId);
+
+  // Gate A: REJECTED terminal branch
+  if (review?.status === "REJECTED" || po.status === "REJECTED") {
+    logger.info({ tenantId, poId }, "Human Review Gate: PO is marked REJECTED; terminating workflow execution");
+    await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "REJECTED", {
+      terminatedAt: new Date(),
+      terminationReason: review?.reason || "Rejected in human review"
+    });
+    if (review) {
+      await ReviewRepository.closeDuplicatePendingTickets(tenantId, poId, review._id.toString());
+    }
+    return {
+      poId,
+      workflowId,
+      status: "REJECTED",
+      isBusinessException: true,
+      validationErrors: [review?.reason || "Rejected in human review"],
+      currentStep: "terminated"
+    };
+  }
+
+  // Gate B: APPROVED sign-off branch
+  const isHumanApproved = review?.status === "APPROVED" || po.status === "HUMAN_APPROVED";
+  if (isHumanApproved) {
+    logger.info({ tenantId, poId }, "Human Review Gate: PO has human sign-off; overriding automated validation checks");
+    const reconciledTax = reconcileTaxFromLineItems(po.lineItems);
+    await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "HUMAN_APPROVED", {
+      extractionConfidence: 1.0,
+      humanReviewedAt: review?.resolvedAt || new Date(),
+      humanReviewedBy: review?.resolvedBy || "Human Reviewer",
+      ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+    });
+    if (review) {
+      await ReviewRepository.closeDuplicatePendingTickets(tenantId, poId, review._id.toString());
+    }
+  }
+
   const graph = buildOrchestrationGraph(tenantId);
 
   const timeoutMs = options?.timeoutMs || Number(process.env.WORKFLOW_TIMEOUT_MS) || 60000; // 60s default for multi-agent multimodal pipelines
@@ -159,7 +206,7 @@ export async function runOrchestrationWorkflow(
         documentName: po.documentName,
         s3Key: po.s3Key,
         currentStep: "intake",
-        status: "PROCESSING",
+        status: isHumanApproved ? "HUMAN_APPROVED" : "PROCESSING",
         toolCallCount: 0,
         validationChecks: [],
         validationErrors: [],
@@ -169,7 +216,9 @@ export async function runOrchestrationWorkflow(
         approvalRequired: false,
         isBusinessException: false,
         allowedVariancePct: 10.0,
-        stepRetries: {}
+        stepRetries: {},
+        isHumanApproved,
+        skipValidation: isHumanApproved
       };
 
       if (options?.onStepUpdate) {

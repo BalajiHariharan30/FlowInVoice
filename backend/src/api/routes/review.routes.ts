@@ -5,7 +5,8 @@ import {
   ReviewRepository,
   PurchaseOrderRepository,
   InvoiceRepository,
-  AuditRepository
+  AuditRepository,
+  reconcileTaxFromLineItems
 } from "../../repositories/index.js";
 import { POProcessingWorkflow } from "../../agents/workflow.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
@@ -97,11 +98,7 @@ reviewRouter.get("/:reviewId", async (req: Request, res: Response): Promise<void
   });
 });
 
-/**
- * POST /reviews/:reviewId/approve
- * Approves exception and resumes workflow at corresponding stage
- */
-reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Promise<void> => {
+async function handleReviewApproval(req: Request, res: Response): Promise<void> {
   const tenantId = req.user!.tenantId;
   const { resolutionNotes, correctedLineItems } = req.body || {};
   const reviewId = req.params.reviewId as string;
@@ -143,11 +140,25 @@ reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Pro
     req.user!.email
   );
 
+  // Close any duplicate pending tickets for this entity
+  await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
+
   // Resume workflow at the appropriate stage
   if (review.stage === "extraction" || review.stage === "validation") {
-    // Advance PO status
-    const targetStatus = review.stage === "extraction" ? "VALIDATING" : "APPROVED";
-    await PurchaseOrderRepository.updateStatus(tenantId, review.entityId, targetStatus);
+    if (review.entity === "purchase_order") {
+      const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
+      const activeLineItems = (Array.isArray(correctedLineItems) && correctedLineItems.length > 0)
+        ? correctedLineItems
+        : po?.lineItems;
+      const reconciledTax = reconcileTaxFromLineItems(activeLineItems);
+
+      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, review.entityId, "HUMAN_APPROVED", {
+        extractionConfidence: 1.0,
+        humanReviewedAt: new Date(),
+        humanReviewedBy: req.user!.email,
+        ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+      });
+    }
 
     // Resume via LangGraph Orchestration Workflow asynchronously with legacy fallback
     setImmediate(async () => {
@@ -199,13 +210,9 @@ reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Pro
     resolvedBy: resolved!.resolvedBy,
     resolvedAt: resolved!.resolvedAt
   });
-});
+}
 
-/**
- * POST /reviews/:reviewId/reject
- * Rejects exception with stage-aware outcome
- */
-reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Promise<void> => {
+async function handleReviewRejection(req: Request, res: Response): Promise<void> {
   const tenantId = req.user!.tenantId;
   const { reason } = req.body || {};
 
@@ -291,20 +298,30 @@ reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Prom
       req.user!.email,
       {
         discrepancyReport: reanalysis.discrepancies,
-        evidence: combinedEvidence
+        evidence: combinedEvidence,
+        rejectionReason: reason
       }
     );
+
+    // Close any duplicate pending tickets for this entity
+    await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
 
     // Mark PO REJECTED with summary reasons
     const summaryReasons = reanalysis.discrepancies
       .map((d) => `[${d.nodeId}] ${d.message || d.field}`)
       .join("; ");
 
-    await PurchaseOrderRepository.updateStatus(
+    await PurchaseOrderRepository.updateHumanReviewStatus(
       tenantId,
       review.entityId,
       "REJECTED",
-      `Rejection confirmed with ${reanalysis.discrepancies.length} discrepancies: ${summaryReasons}`
+      {
+        humanReviewedAt: new Date(),
+        humanReviewedBy: req.user!.email,
+        terminatedAt: new Date(),
+        terminationReason: `Rejection confirmed with ${reanalysis.discrepancies.length} discrepancies: ${summaryReasons}`,
+        failureReason: `Rejection confirmed with ${reanalysis.discrepancies.length} discrepancies: ${summaryReasons}`
+      }
     );
 
     // Persist immutable audit log with full discrepancy report
@@ -342,8 +359,12 @@ reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Prom
     review._id.toString(),
     "REJECTED",
     reason,
-    req.user!.email
+    req.user!.email,
+    { rejectionReason: reason }
   );
+
+  // Close any duplicate pending tickets for this entity
+  await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
 
   if (review.stage === "invoice") {
     await InvoiceRepository.updateStatus(tenantId, review.entityId, "REJECTED");
@@ -377,4 +398,46 @@ reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Prom
     resolvedBy: resolved!.resolvedBy,
     resolvedAt: resolved!.resolvedAt
   });
+}
+
+/**
+ * POST /reviews/:reviewId/approve
+ * Approves exception and resumes workflow at corresponding stage
+ */
+reviewRouter.post("/:reviewId/approve", async (req: Request, res: Response): Promise<void> => {
+  return handleReviewApproval(req, res);
+});
+
+/**
+ * POST /reviews/:reviewId/reject
+ * Rejects exception with stage-aware outcome
+ */
+reviewRouter.post("/:reviewId/reject", async (req: Request, res: Response): Promise<void> => {
+  return handleReviewRejection(req, res);
+});
+
+/**
+ * POST /reviews/:reviewId/resolve
+ * Unified resolution endpoint supporting { decision: 'APPROVED' | 'REJECTED', ... }
+ */
+reviewRouter.post("/:reviewId/resolve", async (req: Request, res: Response): Promise<void> => {
+  const { decision, reason, resolutionNotes } = req.body || {};
+  if (decision === "REJECTED") {
+    if (!req.body.reason && resolutionNotes) {
+      req.body.reason = resolutionNotes;
+    }
+    return handleReviewRejection(req, res);
+  } else if (decision === "APPROVED") {
+    if (!req.body.resolutionNotes && reason) {
+      req.body.resolutionNotes = reason;
+    }
+    return handleReviewApproval(req, res);
+  } else {
+    res.status(400).json({
+      code: "INVALID_DECISION",
+      message: "decision must be either 'APPROVED' or 'REJECTED'",
+      details: { decision },
+      requestId: req.requestId || ""
+    });
+  }
 });

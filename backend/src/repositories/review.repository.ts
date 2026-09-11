@@ -90,7 +90,7 @@ export class ReviewRepository {
     status: ReviewStatus,
     resolutionNotes: string,
     resolvedBy: string,
-    extra?: { discrepancyReport?: any[]; evidence?: any[] }
+    extra?: { discrepancyReport?: any[]; evidence?: any[]; rejectionReason?: string }
   ): Promise<IHumanReview | null> {
     const updatePayload: any = {
       status,
@@ -103,6 +103,9 @@ export class ReviewRepository {
     }
     if (extra?.evidence) {
       updatePayload.evidence = extra.evidence;
+    }
+    if (extra?.rejectionReason) {
+      updatePayload.rejectionReason = extra.rejectionReason;
     }
 
     if (isDbConnected()) {
@@ -118,5 +121,54 @@ export class ReviewRepository {
     Object.assign(doc, updatePayload, { updatedAt: new Date() });
     return doc;
   }
+
+  static async findLatestByEntityId(tenantId: string, entityId: string): Promise<IHumanReview | null> {
+    if (isDbConnected()) {
+      return HumanReview.findOne({ tenantId, entityId }).sort({ createdAt: -1 });
+    }
+    const items = Array.from(inMemory.reviews.values())
+      .filter((r) => r.tenantId === tenantId && r.entityId === entityId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return items[0] || null;
+  }
+
+  static async closeDuplicatePendingTickets(tenantId: string, entityId: string, keepReviewId?: string): Promise<void> {
+    if (isDbConnected()) {
+      const query: any = { tenantId, entityId, status: "PENDING" };
+      if (keepReviewId && mongoose.isValidObjectId(keepReviewId)) {
+        query._id = { $ne: keepReviewId };
+      }
+      await HumanReview.updateMany(query, {
+        $set: {
+          status: "APPROVED",
+          resolutionNotes: "Resolved alongside primary review decision",
+          resolvedAt: new Date()
+        }
+      });
+      return;
+    }
+    for (const r of inMemory.reviews.values()) {
+      if (r.tenantId === tenantId && r.entityId === entityId && r.status === "PENDING" && r._id !== keepReviewId) {
+        r.status = "APPROVED";
+        r.resolutionNotes = "Resolved alongside primary review decision";
+        r.resolvedAt = new Date();
+        r.updatedAt = new Date();
+      }
+    }
+  }
+}
+
+/**
+ * Reconciles tax from line item tax rates if available.
+ * Returns the exact computed tax or null if line items have no tax rates.
+ */
+export function reconcileTaxFromLineItems(lineItems?: any[]): number | null {
+  if (!Array.isArray(lineItems) || lineItems.length === 0) return null;
+  const lineTaxesSum = lineItems.reduce((acc: number, li: any) => {
+    const lt = typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0;
+    const tr = typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0;
+    return acc + (lt * tr / 100);
+  }, 0);
+  return lineTaxesSum > 0 ? Number(lineTaxesSum.toFixed(2)) : null;
 }
 
