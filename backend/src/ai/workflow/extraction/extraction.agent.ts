@@ -33,8 +33,6 @@ export function createExtractionNode(tenantId: string) {
       po.extractionConfidence === 1.0;
 
     if (
-      po.lineItems &&
-      po.lineItems.length > 0 &&
       isHumanVerified &&
       po.poNumber &&
       !po.poNumber.startsWith("PENDING-")

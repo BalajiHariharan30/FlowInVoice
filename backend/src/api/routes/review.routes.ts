@@ -160,23 +160,17 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
       });
     }
 
-    // Resume via LangGraph Orchestration Workflow asynchronously with legacy fallback
+    // Resume via LangGraph Orchestration Workflow asynchronously.
+    // No legacy fallback: the legacy engine has no isHumanApproved awareness
+    // and would re-enter the review pipeline for an already-resolved PO.
     setImmediate(async () => {
       try {
         await runOrchestrationWorkflow(tenantId, review.entityId);
       } catch (err: any) {
         logger.error(
           { err, tenantId, poId: review.entityId },
-          "Error running LangGraph workflow upon review approval; attempting legacy fallback"
+          "LangGraph workflow failed upon review approval; no legacy fallback for approved POs"
         );
-        try {
-          await POProcessingWorkflow.runWorkflow(tenantId, review.entityId);
-        } catch (legacyErr: any) {
-          logger.error(
-            { legacyErr, tenantId, poId: review.entityId },
-            "Legacy workflow also failed upon review approval"
-          );
-        }
       }
     });
   } else if (review.stage === "invoice") {
