@@ -61,12 +61,14 @@ export function createPolicyEvaluationNode(tenantId: string) {
       // Mismatch detected: perform Agentic RAG Step A (Contract Search)
       await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "RAG_CHECKING");
 
+      let noActiveContract = false;
       if (toolCallCount < 3 && state.customerId) {
         toolCallCount++;
         const contractClauses = await AgentTools.searchContractClauses(
           tenantId,
           state.customerId,
-          `negotiated price discount tier for ${item.productCode} or ${item.description}`
+          `negotiated price discount tier for ${item.productCode} or ${item.description}`,
+          state.extractedData?.issueDate
         );
 
         if (contractClauses && contractClauses.length > 0) {
@@ -80,6 +82,8 @@ export function createPolicyEvaluationNode(tenantId: string) {
             message: `Contract terms matched clause: ${contractClauses[0].section}`
           });
           continue; // Contract overrides catalog variance
+        } else {
+          noActiveContract = true;
         }
       }
 
@@ -152,6 +156,8 @@ export function createPolicyEvaluationNode(tenantId: string) {
       validationErrors: errors,
       approvalRequired: hasErrors,
       approvalReason: hasErrors ? errors[0] : undefined,
+      isBusinessException: hasErrors,
+      noActiveContract: Boolean(hasErrors && !evidenceList.some((e) => e.sourceType === "CONTRACT")),
       toolCallCount,
       currentStep: "policy_evaluation"
     };

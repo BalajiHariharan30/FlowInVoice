@@ -41,6 +41,16 @@ export function createPostingNode(tenantId: string) {
     const invoiceNumber = invoice?.invoiceNumber || `INV-${po.poNumber.replace(/^PO-/, "")}`;
 
     // 2. Compute Canonical Decimal Totals
+    const headerCurrency = (po.currency || "INR").trim().toUpperCase();
+    const divergent = po.lineItems.find(
+      (it: any) => it.currency && it.currency.trim().toUpperCase() !== headerCurrency
+    );
+    if (divergent) {
+      throw new Error(
+        `CURRENCY_MISMATCH: Cannot generate invoice with divergent line item currency (${(divergent as any).currency} vs header ${headerCurrency})`
+      );
+    }
+
     let subtotal = MoneyUtil.from(0);
     const invoiceLineItems = po.lineItems.map((item) => {
       const lineTotal = MoneyUtil.multiply(item.quantity, item.unitPrice);

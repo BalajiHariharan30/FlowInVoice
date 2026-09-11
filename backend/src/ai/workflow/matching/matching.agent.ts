@@ -19,7 +19,27 @@ export function createMatchingNode(tenantId: string) {
     const customerName = state.extractedData?.customerName || state.customerName || "Default Customer";
 
     // 1. Resolve Customer Master
-    let customer = await AgentTools.getCustomer(tenantId, customerName);
+    const customerRes = await AgentTools.getCustomer(
+      tenantId,
+      customerName,
+      state.extractedData?.gstNumber
+    );
+
+    if (customerRes?.ambiguous) {
+      const candidateList = customerRes.candidates
+        .map((c) => `${c.name} (GSTIN: ${c.gstNumber || "N/A"})`)
+        .join(", ");
+      const ambiguityError = `CUSTOMER_AMBIGUITY: Multiple distinct customer records (${customerRes.candidates.length}) match "${customerName}". Candidate GSTINs: [${candidateList}]. Manual customer disambiguation required.`;
+      logger.warn({ tenantId, poId: state.poId, candidates: customerRes.candidates }, ambiguityError);
+
+      return {
+        validationErrors: [ambiguityError],
+        isBusinessException: true,
+        currentStep: "matching"
+      };
+    }
+
+    let customer = customerRes?.customer || null;
     if (!customer) {
       customer = await CustomerRepository.create(tenantId, {
         name: customerName,
@@ -38,16 +58,30 @@ export function createMatchingNode(tenantId: string) {
     const lineItems = state.extractedData?.lineItems || [];
     const matchedLineItems: MatchedLineItem[] = [];
 
+    const uncatalogedThreshold = Number(process.env.UNCATALOGED_SKU_THRESHOLD) || 1000;
+    const errors: string[] = [];
+    let requiresCatalogReview = false;
+
     for (const item of lineItems) {
       let catalogPrice = await AgentTools.getProductPrice(tenantId, item.productCode);
-      if (catalogPrice === null) {
-        // Use extracted unit price as catalog baseline when no catalog entry exists.
-        // This models a "first-time" product whose price becomes the benchmark —
-        // any real deviation would be caught on subsequent uploads.
-        catalogPrice = item.unitPrice;
+      const isUncataloged = catalogPrice === null;
+      let autoAcceptedNewSku = false;
+
+      if (isUncataloged) {
+        const lineTotal = item.lineTotal || (item.quantity * item.unitPrice);
+        if (lineTotal >= uncatalogedThreshold) {
+          requiresCatalogReview = true;
+          const msg = `Uncataloged SKU ${item.productCode} (line total $${lineTotal}) meets/exceeds new product catalog review threshold ($${uncatalogedThreshold}). Escalating for catalog review.`;
+          errors.push(msg);
+        } else {
+          autoAcceptedNewSku = true;
+          catalogPrice = item.unitPrice;
+        }
       }
 
-      const variance = AgentTools.calculateVariance(item.unitPrice, catalogPrice);
+      const variance = catalogPrice !== null
+        ? AgentTools.calculateVariance(item.unitPrice, catalogPrice)
+        : { variancePercentage: 100, isMatch: false };
 
       matchedLineItems.push({
         lineNumber: item.lineNumber,
@@ -57,9 +91,11 @@ export function createMatchingNode(tenantId: string) {
         unitPrice: item.unitPrice,
         lineTotal: item.lineTotal,
         taxRate: item.taxRate,
-        catalogPrice,
+        catalogPrice: catalogPrice !== null ? catalogPrice : 0,
         variancePercentage: variance.variancePercentage,
-        isMatch: variance.isMatch
+        isMatch: !isUncataloged && variance.isMatch,
+        requiresCatalogReview: isUncataloged && requiresCatalogReview,
+        autoAcceptedNewSku
       });
     }
 
@@ -73,7 +109,7 @@ export function createMatchingNode(tenantId: string) {
     await AuditRepository.create(tenantId, {
       agentName: "MatchingAgent",
       action: "MATCH_ENTITIES",
-      status: "SUCCESS",
+      status: requiresCatalogReview ? "EXCEPTION" : "SUCCESS",
       entityId: state.poId,
       workflowId: state.workflowId,
       latency,
@@ -84,6 +120,9 @@ export function createMatchingNode(tenantId: string) {
       customerId,
       customerName: customer.name,
       matchedLineItems,
+      validationErrors: errors,
+      isBusinessException: requiresCatalogReview,
+      requiresCatalogReview,
       currentStep: "matching"
     };
   };

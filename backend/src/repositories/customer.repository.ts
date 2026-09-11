@@ -47,13 +47,22 @@ export class CustomerRepository {
   }
 
   static async findByName(tenantId: string, name: string): Promise<ICustomer | null> {
+    const candidates = await this.findCandidatesByName(tenantId, name);
+    return candidates.length === 1 ? candidates[0] : null;
+  }
+
+  static async findCandidatesByName(tenantId: string, name: string): Promise<ICustomer[]> {
     if (isDbConnected()) {
-      return Customer.findOne({ tenantId, name: { $regex: new RegExp(`^${name}$`, "i") } });
+      return Customer.find({ tenantId, name: { $regex: new RegExp(`^${name}$`, "i") } }).limit(5);
     }
+    const candidates: ICustomer[] = [];
     for (const doc of inMemory.customers.values()) {
-      if (doc.tenantId === tenantId && doc.name.toLowerCase() === name.toLowerCase()) return doc;
+      if (doc.tenantId === tenantId && doc.name.toLowerCase() === name.toLowerCase()) {
+        candidates.push(doc);
+        if (candidates.length >= 5) break;
+      }
     }
-    return null;
+    return candidates;
   }
 
   static async findMany(tenantId: string, params: PaginationParams): Promise<PaginatedResult<ICustomer>> {

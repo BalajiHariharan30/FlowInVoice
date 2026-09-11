@@ -38,6 +38,7 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
     clearTestRepositories();
     resetWorkflowRateLimiter();
     QdrantService.clearMockStore();
+    process.env.UNCATALOGED_SKU_THRESHOLD = "100000";
   });
 
   afterEach(() => {

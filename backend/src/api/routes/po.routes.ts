@@ -72,10 +72,15 @@ poRouter.post("/", upload.single("file"), async (req: Request, res: Response): P
       file.mimetype || "application/pdf"
     );
 
+    const providedPoNumber = req.body?.poNumber ? String(req.body.poNumber).trim() : null;
+    const poNumber = providedPoNumber && providedPoNumber.length > 0
+      ? providedPoNumber
+      : `PENDING-${uuidv4().slice(0, 6).toUpperCase()}`;
+
     // Initial PO record creation in database
     const po = await PurchaseOrderRepository.create(tenantId, {
-      poNumber: `PENDING-${uuidv4().slice(0, 6).toUpperCase()}`,
-      customerName: "Processing Customer...",
+      poNumber,
+      customerName: req.body?.customerName || "Processing Customer...",
       gstNumber: "",
       status: "PROCESSING",
       s3Key: s3Result.s3Key,
@@ -108,6 +113,15 @@ poRouter.post("/", upload.single("file"), async (req: Request, res: Response): P
       status: "PROCESSING"
     });
   } catch (err: any) {
+    if (err?.code === "DUPLICATE_PO_NUMBER" || err?.statusCode === 409 || err?.code === 11000) {
+      res.status(409).json({
+        code: "DUPLICATE_PO_NUMBER",
+        message: err.message || "Duplicate purchase order number detected",
+        details: {},
+        requestId: req.requestId || ""
+      });
+      return;
+    }
     res.status(500).json({
       code: "UPLOAD_FAILED",
       message: err.message || "Failed to process upload",

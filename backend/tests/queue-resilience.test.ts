@@ -1,4 +1,5 @@
-﻿import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import Redis from "ioredis";
 import { QueueManager } from "../src/workers/queue.js";
 import { env } from "../src/config/env.js";
 
@@ -39,6 +40,7 @@ describe("QueueManager Resilience & Redis Backoff (§Fix Spec)", () => {
   it("3. initialize() throws a loud error when REQUIRE_REDIS=true and Redis is unreachable", async () => {
     env.REQUIRE_REDIS = true;
     env.REDIS_URL = "redis://invalid-host-9999.local:6379";
+    vi.spyOn(Redis.prototype, "connect").mockRejectedValue(new Error("ECONNREFUSED"));
 
     await expect(QueueManager.initialize()).rejects.toThrow(
       /REQUIRE_REDIS=true is enforced, but failed to connect to Redis/i
@@ -48,6 +50,7 @@ describe("QueueManager Resilience & Redis Backoff (§Fix Spec)", () => {
   it("4. initialize() gracefully degrades with reconnect watcher when REQUIRE_REDIS=false", async () => {
     env.REQUIRE_REDIS = false;
     env.REDIS_URL = "redis://invalid-host-9999.local:6379";
+    vi.spyOn(Redis.prototype, "connect").mockRejectedValue(new Error("ECONNREFUSED"));
 
     // Should not throw, should log and degrade
     await QueueManager.initialize();

@@ -20,7 +20,8 @@ export const PurchaseOrderExtractionSchema = z.object({
       unitPrice: z.number(),
       lineTotal: z.number(),
       taxRate: z.number().default(0),
-      gstNumber: z.string().optional()
+      gstNumber: z.string().optional(),
+      currency: z.string().optional()
     })
   ),
   subtotal: z.number(),

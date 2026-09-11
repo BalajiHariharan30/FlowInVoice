@@ -30,10 +30,13 @@ export function createExtractionNode(tenantId: string) {
     const isHumanVerified =
       Boolean(state.isHumanApproved) ||
       po.status === "HUMAN_APPROVED" ||
+      Boolean(po.humanReviewedAt) ||
       po.extractionConfidence === 1.0;
 
     if (
       isHumanVerified &&
+      Array.isArray(po.lineItems) &&
+      po.lineItems.length > 0 &&
       po.poNumber &&
       !po.poNumber.startsWith("PENDING-")
     ) {

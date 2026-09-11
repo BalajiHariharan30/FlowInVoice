@@ -82,6 +82,7 @@ export interface IPOLineItem {
   taxRate: number;
   gstNumber?: string;
   matchedProductId?: string;
+  currency?: string;
 }
 
 const POLineItemSchema = new Schema<IPOLineItem>(
@@ -94,7 +95,8 @@ const POLineItemSchema = new Schema<IPOLineItem>(
     lineTotal: { type: Number, required: true },
     taxRate: { type: Number, default: 0 },
     gstNumber: { type: String },
-    matchedProductId: { type: String }
+    matchedProductId: { type: String },
+    currency: { type: String }
   },
   { _id: false }
 );
@@ -187,7 +189,15 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
   },
   { timestamps: true }
 );
-PurchaseOrderSchema.index({ tenantId: 1, poNumber: 1 });
+PurchaseOrderSchema.index(
+  { tenantId: 1, poNumber: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      poNumber: { $type: "string", $gt: "" }
+    }
+  }
+);
 PurchaseOrderSchema.index({ tenantId: 1, status: 1 });
 PurchaseOrderSchema.index({ tenantId: 1, customerId: 1 });
 PurchaseOrderSchema.index({ tenantId: 1, createdAt: -1 });

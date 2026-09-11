@@ -10,16 +10,36 @@ import { MoneyUtil } from "../utils/money.js";
 import { EvidenceItem } from "../types/index.js";
 
 export class AgentTools {
-  static async getCustomer(tenantId: string, query: string) {
+  static async getCustomer(tenantId: string, query: string, gstNumber?: string) {
     if (!query) return null;
     const byCode = await CustomerRepository.findByCode(tenantId, query);
-    if (byCode) return byCode;
-    const byName = await CustomerRepository.findByName(tenantId, query);
-    if (byName) return byName;
+    if (byCode) return { customer: byCode, ambiguous: false, candidates: [byCode] };
+
+    const candidates = await CustomerRepository.findCandidatesByName(tenantId, query);
+    if (candidates.length > 1) {
+      if (gstNumber) {
+        const exactGst = candidates.find(
+          (c) => c.gstNumber && c.gstNumber.trim().toUpperCase() === gstNumber.trim().toUpperCase()
+        );
+        if (exactGst) return { customer: exactGst, ambiguous: false, candidates: [exactGst] };
+      }
+      return {
+        customer: null,
+        ambiguous: true,
+        candidates
+      };
+    }
+
+    if (candidates.length === 1) {
+      return { customer: candidates[0], ambiguous: false, candidates };
+    }
+
     const derivedCode = query.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 8);
     if (derivedCode && derivedCode !== query) {
-      return CustomerRepository.findByCode(tenantId, derivedCode);
+      const byDerived = await CustomerRepository.findByCode(tenantId, derivedCode);
+      if (byDerived) return { customer: byDerived, ambiguous: false, candidates: [byDerived] };
     }
+
     return null;
   }
 
@@ -66,24 +86,44 @@ export class AgentTools {
   static async searchContractClauses(
     tenantId: string,
     customerId: string,
-    query: string
+    query: string,
+    issueDate?: string | Date
   ): Promise<EvidenceItem[]> {
+    const targetDate = issueDate ? new Date(issueDate) : new Date();
+
     const results = await QdrantService.search(
       tenantId,
       query,
       { customerId, documentType: "CONTRACT" },
-      3
+      10
     );
 
-    return results.map((r) => ({
-      sourceType: "CONTRACT",
-      documentId: r.chunk.documentId,
-      documentName: r.chunk.documentName,
-      pageNumber: r.chunk.pageNumber,
-      section: r.chunk.section,
-      chunkId: r.chunk.chunkId,
-      claim: r.chunk.content.substring(0, 300)
-    }));
+    const validClauses: EvidenceItem[] = [];
+    for (const r of results) {
+      if (r.chunk.documentId) {
+        const contract = await ContractRepository.findById(tenantId, r.chunk.documentId);
+        if (contract) {
+          const effFrom = new Date(contract.effectiveFrom);
+          const effTo = new Date(contract.effectiveTo);
+          if (contract.status !== "ACTIVE" || targetDate < effFrom || targetDate > effTo) {
+            // Expired or future contract terms are invalid for this PO issue date
+            continue;
+          }
+        }
+      }
+      validClauses.push({
+        sourceType: "CONTRACT",
+        documentId: r.chunk.documentId,
+        documentName: r.chunk.documentName,
+        pageNumber: r.chunk.pageNumber,
+        section: r.chunk.section,
+        chunkId: r.chunk.chunkId,
+        claim: r.chunk.content.substring(0, 300)
+      });
+      if (validClauses.length >= 3) break;
+    }
+
+    return validClauses;
   }
 
   /**

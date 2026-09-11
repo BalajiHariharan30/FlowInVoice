@@ -20,6 +20,8 @@ export interface MatchedLineItem {
   catalogPrice?: number;
   variancePercentage?: number;
   isMatch?: boolean;
+  requiresCatalogReview?: boolean;
+  autoAcceptedNewSku?: boolean;
 }
 
 /**
@@ -91,6 +93,14 @@ export const WorkflowStateAnnotation = Annotation.Root({
   policySourceReferences: Annotation<string[]>({
     reducer: (curr, update) => Array.from(new Set([...curr, ...update])),
     default: () => []
+  }),
+  noActiveContract: Annotation<boolean>({
+    reducer: (curr, update) => curr || update,
+    default: () => false
+  }),
+  requiresCatalogReview: Annotation<boolean>({
+    reducer: (curr, update) => curr || update,
+    default: () => false
   }),
 
   // Agent 5: Approval Decision state

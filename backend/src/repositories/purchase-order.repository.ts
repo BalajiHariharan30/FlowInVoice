@@ -6,8 +6,28 @@ import { inMemory, isDbConnected, generateId, calcPagination } from "./base.js";
 export class PurchaseOrderRepository {
   static async create(tenantId: string, data: Partial<IPurchaseOrder>): Promise<IPurchaseOrder> {
     if (isDbConnected()) {
-      const po = new PurchaseOrder({ ...data, tenantId });
-      return po.save();
+      try {
+        const po = new PurchaseOrder({ ...data, tenantId });
+        return await po.save();
+      } catch (err: any) {
+        if (err?.code === 11000) {
+          const duplicateError: any = new Error(`Duplicate purchase order number: ${data.poNumber || "unknown"}`);
+          duplicateError.code = "DUPLICATE_PO_NUMBER";
+          duplicateError.statusCode = 409;
+          throw duplicateError;
+        }
+        throw err;
+      }
+    }
+    if (data.poNumber && data.poNumber.trim().length > 0) {
+      for (const doc of inMemory.pos.values()) {
+        if (doc.tenantId === tenantId && doc.poNumber === data.poNumber) {
+          const duplicateError: any = new Error(`Duplicate purchase order number: ${data.poNumber}`);
+          duplicateError.code = "DUPLICATE_PO_NUMBER";
+          duplicateError.statusCode = 409;
+          throw duplicateError;
+        }
+      }
     }
     const id = generateId();
     const doc: any = {

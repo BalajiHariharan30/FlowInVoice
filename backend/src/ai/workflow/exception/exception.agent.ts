@@ -41,14 +41,34 @@ export function createExceptionNode(tenantId: string) {
     let reviewId: string;
     if (existingPending) {
       reviewId = existingPending._id.toString();
+
+      // Merge and deduplicate evidence across workflow runs (§Step 7 Remediation)
+      const existingEvidence = existingPending.evidence || [];
+      const newEvidence = state.evidence || [];
+      const mergedEvidence = [...existingEvidence];
+
+      for (const ev of newEvidence) {
+        const isDuplicate = mergedEvidence.some(
+          (e) =>
+            (e.chunkId && ev.chunkId && e.chunkId === ev.chunkId) ||
+            (e.documentId === ev.documentId && e.section === ev.section)
+        );
+        if (!isDuplicate) {
+          mergedEvidence.push(ev);
+        }
+      }
+
       await ReviewRepository.updateReview(tenantId, reviewId, {
         reason,
         priority,
         stage,
         actualValue: reason,
-        evidence: state.evidence || []
+        evidence: mergedEvidence
       });
-      logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Updated existing open review ticket");
+      logger.info(
+        { tenantId, poId: state.poId, reviewId, evidenceCount: mergedEvidence.length },
+        "ExceptionAgent: Updated existing open review ticket with merged evidence"
+      );
     } else {
       // Create Human Review Record
       const review = await ReviewRepository.create(tenantId, {

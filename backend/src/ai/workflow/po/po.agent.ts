@@ -20,20 +20,37 @@ export function createPOValidationNode(tenantId: string) {
 
     const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
 
-    // Human sign-off defense: stop treating human-approved PO as a fresh input
-    if (state.skipValidation || state.isHumanApproved || po?.status === "HUMAN_APPROVED" || po?.status === "REJECTED") {
-      logger.info({ tenantId, poId: state.poId, status: po?.status }, "POValidationAgent: Human review sign-off active; bypassing automated checks");
+    if (po?.status === "REJECTED") {
+      logger.info({ tenantId, poId: state.poId }, "POValidationAgent: PO is REJECTED; halting validation");
       return {
         currentStep: "po_validation",
-        validationErrors: [],
-        isBusinessException: false
+        validationErrors: ["Purchase order is in REJECTED status"],
+        isBusinessException: true
       };
     }
 
-    const data = state.extractedData;
-    if (!data) {
+    const isHumanSignoff = Boolean(
+      state.skipValidation || state.isHumanApproved || po?.status === "HUMAN_APPROVED"
+    );
+
+    const data = state.extractedData || (po ? {
+      poNumber: po.poNumber || "",
+      customerName: po.customerName || "",
+      gstNumber: po.gstNumber || "",
+      currency: po.currency || "INR",
+      paymentTerms: po.paymentTerms || "NET_30",
+      issueDate: po.issueDate ? new Date(po.issueDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
+      lineItems: po.lineItems || [],
+      subtotal: po.subtotal || 0,
+      tax: po.tax || 0,
+      discount: po.discount || 0,
+      totalAmount: po.totalAmount || 0,
+      confidence: po.extractionConfidence || 1.0
+    } : undefined);
+
+    if (!data || !data.lineItems || data.lineItems.length === 0) {
       return {
-        validationErrors: ["No extracted PO data available for mathematical validation"],
+        validationErrors: ["No extracted PO line items available for mathematical validation"],
         isBusinessException: true,
         currentStep: "po_validation"
       };
@@ -41,6 +58,31 @@ export function createPOValidationNode(tenantId: string) {
 
     const checks: WorkflowValidationCheck[] = [];
     const errors: string[] = [];
+
+    // Pre-check: Multi-currency consistency check (§Step 4 Remediation)
+    const headerCurrency = (data.currency || "INR").trim().toUpperCase();
+    const divergentCurrencies = new Set<string>();
+    for (const item of data.lineItems) {
+      if ((item as any).currency && (item as any).currency.trim().toUpperCase() !== headerCurrency) {
+        divergentCurrencies.add((item as any).currency.trim().toUpperCase());
+      }
+    }
+
+    if (divergentCurrencies.size > 0) {
+      const mismatchMsg = `CURRENCY_MISMATCH: Line items declare divergent currencies (${Array.from(divergentCurrencies).join(", ")}) differing from PO header currency (${headerCurrency}). Raw cross-currency summation is rejected.`;
+      errors.push(mismatchMsg);
+      checks.push({
+        checkName: "CURRENCY_UNIFORMITY_CHECK",
+        passed: false,
+        message: mismatchMsg
+      });
+    } else {
+      checks.push({
+        checkName: "CURRENCY_UNIFORMITY_CHECK",
+        passed: true,
+        message: `All line items share uniform currency: ${headerCurrency}`
+      });
+    }
 
     // Check 1: Line item math & subtotal summation
     let calcSubtotal = MoneyUtil.from(0);
@@ -98,29 +140,33 @@ export function createPOValidationNode(tenantId: string) {
       errors.push(`Total mismatch: expected ${expectedTotal.toFixed(2)}, got ${data.totalAmount}`);
     }
 
-    // Check 3: Duplicate PO check
-    const isDuplicate = await AgentTools.checkDuplicatePO(tenantId, data.poNumber, state.poId);
-    checks.push({
-      checkName: "DUPLICATE_PO_CHECK",
-      passed: !isDuplicate,
-      message: isDuplicate
-        ? `Duplicate PO number ${data.poNumber} detected for tenant`
-        : "PO number is unique"
-    });
-    if (isDuplicate) {
-      errors.push(`Duplicate PO number: ${data.poNumber}`);
+    // Check 3: Duplicate PO check (automated intake only)
+    if (!isHumanSignoff) {
+      const isDuplicate = await AgentTools.checkDuplicatePO(tenantId, data.poNumber, state.poId);
+      checks.push({
+        checkName: "DUPLICATE_PO_CHECK",
+        passed: !isDuplicate,
+        message: isDuplicate
+          ? `Duplicate PO number ${data.poNumber} detected for tenant`
+          : "PO number is unique"
+      });
+      if (isDuplicate) {
+        errors.push(`Duplicate PO number: ${data.poNumber}`);
+      }
     }
 
-    // Check 4: Extraction confidence
+    // Check 4: Extraction confidence (waived on human review signoff)
     const confidence = data.confidence ?? 1.0;
-    const isConfidenceAcceptable = confidence >= 0.75;
-    checks.push({
-      checkName: "EXTRACTION_CONFIDENCE_CHECK",
-      passed: isConfidenceAcceptable,
-      message: `Extraction confidence is ${(confidence * 100).toFixed(1)}%`
-    });
-    if (!isConfidenceAcceptable) {
-      errors.push(`Low extraction confidence: ${(confidence * 100).toFixed(1)}%`);
+    if (!isHumanSignoff) {
+      const isConfidenceAcceptable = confidence >= 0.75;
+      checks.push({
+        checkName: "EXTRACTION_CONFIDENCE_CHECK",
+        passed: isConfidenceAcceptable,
+        message: `Extraction confidence is ${(confidence * 100).toFixed(1)}%`
+      });
+      if (!isConfidenceAcceptable) {
+        errors.push(`Low extraction confidence: ${(confidence * 100).toFixed(1)}%`);
+      }
     }
 
     const hasErrors = errors.length > 0;
