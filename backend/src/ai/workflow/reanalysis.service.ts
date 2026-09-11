@@ -37,12 +37,13 @@ export class ReanalysisService {
     const evidenceList: EvidenceItem[] = [];
 
     // Resolve Customer master for checks
-    let customer = null;
+    let customer: any = null;
     if (po.customerId) {
       customer = await CustomerRepository.findById(tenantId, po.customerId);
     }
     if (!customer && po.customerName) {
-      customer = await AgentTools.getCustomer(tenantId, po.customerName);
+      const match = await AgentTools.getCustomer(tenantId, po.customerName, po.gstNumber);
+      customer = match?.customer || null;
     }
 
     // -------------------------------------------------------------

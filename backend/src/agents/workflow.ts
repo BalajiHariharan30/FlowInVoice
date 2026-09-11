@@ -159,7 +159,8 @@ export class POProcessingWorkflow {
 
 
     // Check customer existence
-    let customer = await AgentTools.getCustomer(tenantId, extracted.customerName);
+    const match = await AgentTools.getCustomer(tenantId, extracted.customerName, extracted.gstNumber);
+    let customer = match?.customer || null;
     if (!customer) {
       // Auto-provision customer for demo/test flow
       customer = await CustomerRepository.create(tenantId, {

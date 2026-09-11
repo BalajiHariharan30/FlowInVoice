@@ -15,7 +15,11 @@ services:
       - key: DEPLOY_VERSION
         value: "1.0.3"
       - key: DOCUMENT_AI_PROVIDER
-        value: vision_fallback
+        value: bedrock
+      - key: MODEL_ARN
+        value: arn:aws:bedrock:us-east-1:325999881191:inference-profile/us.meta.llama3-1-70b-instruct-v1:0
+      - key: BEDROCK_MODEL_ARN
+        value: arn:aws:bedrock:us-east-1:325999881191:inference-profile/us.meta.llama3-1-70b-instruct-v1:0
       - key: GEMINI_API_KEY
         sync: false
       - key: MISTRAL_API_KEY
@@ -41,7 +45,7 @@ services:
       - key: QDRANT_API_KEY
         sync: false
       - key: LLM_PROVIDER
-        value: groq
+        value: bedrock
       - key: GROQ_API_KEY
         sync: false
       - key: JWT_SECRET
