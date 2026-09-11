@@ -6,8 +6,17 @@ import { inMemory, isDbConnected, generateId, calcPagination } from "./base.js";
 export class CustomerRepository {
   static async create(tenantId: string, data: Partial<ICustomer>): Promise<ICustomer> {
     if (isDbConnected()) {
-      const customer = new Customer({ ...data, tenantId });
-      return customer.save();
+      try {
+        const customer = new Customer({ ...data, tenantId });
+        return await customer.save();
+      } catch (err: any) {
+        // Handle E11000 duplicate key race conditions or existing code collisions
+        if (err?.code === 11000 && data.code) {
+          const existing = await Customer.findOne({ tenantId, code: data.code });
+          if (existing) return existing;
+        }
+        throw err;
+      }
     }
     const id = generateId();
     const doc: any = {

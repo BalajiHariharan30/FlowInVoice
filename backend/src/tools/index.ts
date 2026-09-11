@@ -11,9 +11,16 @@ import { EvidenceItem } from "../types/index.js";
 
 export class AgentTools {
   static async getCustomer(tenantId: string, query: string) {
+    if (!query) return null;
     const byCode = await CustomerRepository.findByCode(tenantId, query);
     if (byCode) return byCode;
-    return CustomerRepository.findByName(tenantId, query);
+    const byName = await CustomerRepository.findByName(tenantId, query);
+    if (byName) return byName;
+    const derivedCode = query.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 8);
+    if (derivedCode && derivedCode !== query) {
+      return CustomerRepository.findByCode(tenantId, derivedCode);
+    }
+    return null;
   }
 
   static async getProduct(tenantId: string, sku: string) {
