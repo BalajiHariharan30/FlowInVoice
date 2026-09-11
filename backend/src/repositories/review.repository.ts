@@ -132,7 +132,12 @@ export class ReviewRepository {
     return items[0] || null;
   }
 
-  static async closeDuplicatePendingTickets(tenantId: string, entityId: string, keepReviewId?: string): Promise<void> {
+  static async closeDuplicatePendingTickets(
+    tenantId: string,
+    entityId: string,
+    keepReviewId?: string,
+    decision: ReviewStatus = "APPROVED"
+  ): Promise<void> {
     if (isDbConnected()) {
       const query: any = { tenantId, entityId, status: "PENDING" };
       if (keepReviewId && mongoose.isValidObjectId(keepReviewId)) {
@@ -140,8 +145,8 @@ export class ReviewRepository {
       }
       await HumanReview.updateMany(query, {
         $set: {
-          status: "APPROVED",
-          resolutionNotes: "Resolved alongside primary review decision",
+          status: decision,
+          resolutionNotes: `Resolved alongside primary review decision (${decision})`,
           resolvedAt: new Date()
         }
       });
@@ -149,8 +154,8 @@ export class ReviewRepository {
     }
     for (const r of inMemory.reviews.values()) {
       if (r.tenantId === tenantId && r.entityId === entityId && r.status === "PENDING" && r._id !== keepReviewId) {
-        r.status = "APPROVED";
-        r.resolutionNotes = "Resolved alongside primary review decision";
+        r.status = decision;
+        r.resolutionNotes = `Resolved alongside primary review decision (${decision})`;
         r.resolvedAt = new Date();
         r.updatedAt = new Date();
       }

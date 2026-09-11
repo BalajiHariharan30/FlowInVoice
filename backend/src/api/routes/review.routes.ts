@@ -304,7 +304,7 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     );
 
     // Close any duplicate pending tickets for this entity
-    await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
+    await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString(), "REJECTED");
 
     // Mark PO REJECTED with summary reasons
     const summaryReasons = reanalysis.discrepancies
@@ -364,7 +364,7 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
   );
 
   // Close any duplicate pending tickets for this entity
-  await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
+  await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString(), "REJECTED");
 
   if (review.stage === "invoice") {
     await InvoiceRepository.updateStatus(tenantId, review.entityId, "REJECTED");
