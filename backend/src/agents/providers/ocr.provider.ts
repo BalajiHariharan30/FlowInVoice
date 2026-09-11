@@ -482,34 +482,64 @@ export function sanitizeAndReconcileExtractedPO(parsed: any): ExtractedPOData {
   }
 
   if (Array.isArray(parsed.lineItems) && parsed.lineItems.length > 0) {
-    parsed.lineItems = parsed.lineItems.map((li: any, idx: number) => ({
-      lineNumber: typeof li.lineNumber === "number" ? li.lineNumber : idx + 1,
-      productCode: li.productCode || `ITEM-${idx + 1}`,
-      description: li.description || "Purchase Order Item",
-      quantity: typeof li.quantity === "number" ? li.quantity : Number(li.quantity) || 1,
-      unitPrice: typeof li.unitPrice === "number" ? li.unitPrice : Number(li.unitPrice) || 0,
-      lineTotal: typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0,
-      taxRate: typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0,
-      gstNumber: li.gstNumber || parsed.gstNumber || ""
-    }));
+    parsed.lineItems = parsed.lineItems.map((li: any, idx: number) => {
+      const quantity = typeof li.quantity === "number" ? li.quantity : Number(li.quantity) || 1;
+      const unitPrice = typeof li.unitPrice === "number" ? li.unitPrice : Number(li.unitPrice) || 0;
+      let lineTotal = typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0;
+      const taxRate = typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0;
 
-    // Deterministic arithmetic reconciliation for LLM hallucinations
-    if (parsed.subtotal && parsed.totalAmount) {
-      const lineTaxesSum = parsed.lineItems.reduce((acc: number, li: any) => {
-        const lt = typeof li.lineTotal === "number" ? li.lineTotal : Number(li.lineTotal) || 0;
-        const tr = typeof li.taxRate === "number" ? li.taxRate : Number(li.taxRate) || 0;
-        return acc + (lt * tr / 100);
-      }, 0);
-
-      // If sum of line item taxes matches the difference between total and subtotal, use it
-      if (lineTaxesSum > 0 && Math.abs((parsed.subtotal + lineTaxesSum - (parsed.discount || 0)) - parsed.totalAmount) < 1.0) {
-        parsed.tax = Number(lineTaxesSum.toFixed(2));
-      } else if (Math.abs((parsed.subtotal + (parsed.tax || 0) - (parsed.discount || 0)) - parsed.totalAmount) > 0.01) {
-        const reconciledTax = parsed.totalAmount - parsed.subtotal + (parsed.discount || 0);
-        if (reconciledTax >= 0) {
-          parsed.tax = Number(reconciledTax.toFixed(2));
-        }
+      // Deterministic line math reconciliation:
+      // If quantity > 0 and unitPrice > 0, the canonical pre-tax line total is quantity * unitPrice
+      const expectedLineMath = Number((quantity * unitPrice).toFixed(2));
+      if (expectedLineMath > 0 && Math.abs(lineTotal - expectedLineMath) > 0.01) {
+        logger.info(
+          { lineNumber: idx + 1, extractedLineTotal: lineTotal, expectedLineMath, quantity, unitPrice },
+          "Reconciled extracted lineTotal to exact quantity * unitPrice pre-tax math"
+        );
+        lineTotal = expectedLineMath;
       }
+
+      return {
+        lineNumber: typeof li.lineNumber === "number" ? li.lineNumber : idx + 1,
+        productCode: li.productCode || `ITEM-${idx + 1}`,
+        description: li.description || "Purchase Order Item",
+        quantity,
+        unitPrice,
+        lineTotal,
+        taxRate,
+        gstNumber: li.gstNumber || parsed.gstNumber || ""
+      };
+    });
+
+    // Reconcile subtotal as the exact sum of all line item totals
+    const calculatedSubtotal = Number(
+      parsed.lineItems.reduce((acc: number, li: any) => acc + (li.lineTotal || 0), 0).toFixed(2)
+    );
+    if (calculatedSubtotal > 0 && Math.abs(parsed.subtotal - calculatedSubtotal) > 0.01) {
+      logger.info(
+        { extractedSubtotal: parsed.subtotal, calculatedSubtotal },
+        "Reconciled extracted subtotal to exact sum of line items"
+      );
+      parsed.subtotal = calculatedSubtotal;
+    }
+
+    // Reconcile tax and total amount
+    const lineTaxesSum = Number(
+      parsed.lineItems.reduce((acc: number, li: any) => {
+        const lt = li.lineTotal || 0;
+        const tr = li.taxRate || 0;
+        return acc + (lt * tr / 100);
+      }, 0).toFixed(2)
+    );
+
+    if (lineTaxesSum > 0 && (!parsed.tax || Math.abs(parsed.tax - lineTaxesSum) > 0.01)) {
+      parsed.tax = lineTaxesSum;
+    }
+
+    const discount = parsed.discount || 0;
+    const expectedGrandTotal = Number((parsed.subtotal + (parsed.tax || 0) - discount).toFixed(2));
+    if (Math.abs(parsed.totalAmount - expectedGrandTotal) > 0.01) {
+      parsed.totalAmount = expectedGrandTotal;
     }
   } else {
     parsed.lineItems = [

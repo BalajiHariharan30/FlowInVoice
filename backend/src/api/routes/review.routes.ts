@@ -147,10 +147,36 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
   if (review.stage === "extraction" || review.stage === "validation") {
     if (review.entity === "purchase_order") {
       const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
-      const activeLineItems = (Array.isArray(correctedLineItems) && correctedLineItems.length > 0)
+      const hasExplicitCorrections = Array.isArray(correctedLineItems) && correctedLineItems.length > 0;
+      let activeLineItems = hasExplicitCorrections
         ? correctedLineItems
-        : po?.lineItems;
+        : (po?.lineItems || []);
+
+      // If no explicit human corrections provided, auto-reconcile OCR tax-inclusive line totals
+      if (!hasExplicitCorrections) {
+        activeLineItems = activeLineItems.map((li: any) => {
+          const qty = Number(li.quantity) || 1;
+          const price = Number(li.unitPrice) || 0;
+          const canonicalLineTotal = Number((qty * price).toFixed(2));
+          if (canonicalLineTotal > 0 && Math.abs((Number(li.lineTotal) || 0) - canonicalLineTotal) > 0.01) {
+            return { ...li, lineTotal: canonicalLineTotal };
+          }
+          return li;
+        });
+      }
+
       const reconciledTax = reconcileTaxFromLineItems(activeLineItems);
+      const subtotal = Number(activeLineItems.reduce((acc: number, li: any) => acc + (li.lineTotal || 0), 0).toFixed(2));
+      const effectiveTax = reconciledTax !== null ? reconciledTax : (po?.tax || 0);
+      const discount = po?.discount || 0;
+      const totalAmount = Number((subtotal + effectiveTax - discount).toFixed(2));
+
+      await PurchaseOrderRepository.updateExtraction(tenantId, review.entityId, {
+        lineItems: activeLineItems,
+        subtotal,
+        tax: effectiveTax,
+        totalAmount
+      });
 
       await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, review.entityId, "HUMAN_APPROVED", {
         extractionConfidence: 1.0,
