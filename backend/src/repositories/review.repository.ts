@@ -37,6 +37,16 @@ export class ReviewRepository {
     );
   }
 
+  static async findPendingByEntityId(tenantId: string, entityId: string): Promise<IHumanReview | null> {
+    if (isDbConnected()) {
+      return HumanReview.findOne({ tenantId, entityId, status: "PENDING" }).sort({ createdAt: -1 });
+    }
+    const items = Array.from(inMemory.reviews.values())
+      .filter((r) => r.tenantId === tenantId && r.entityId === entityId && r.status === "PENDING")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return items[0] || null;
+  }
+
   static async findMany(
     tenantId: string,
     params: PaginationParams

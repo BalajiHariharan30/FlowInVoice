@@ -29,6 +29,17 @@ export function createPolicyEvaluationNode(tenantId: string) {
     logger.info({ tenantId, poId: state.poId }, "PolicyEvaluationAgent: Evaluating commercial & policy compliance");
     const startTime = Date.now();
 
+    // Human sign-off defense: human approval overrides automated price variance and policy thresholds
+    if (state.skipValidation || state.isHumanApproved) {
+      logger.info({ tenantId, poId: state.poId }, "PolicyEvaluationAgent: Human review sign-off active; bypassing policy checks");
+      return {
+        currentStep: "policy_evaluation",
+        validationErrors: [],
+        approvalRequired: false,
+        isBusinessException: false
+      };
+    }
+
     const matchedItems = state.matchedLineItems || [];
     const evidenceList: EvidenceItem[] = [];
     const errors: string[] = [];

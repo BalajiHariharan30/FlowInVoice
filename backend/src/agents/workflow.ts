@@ -309,20 +309,27 @@ export class POProcessingWorkflow {
 
       // Escalate to Human Review (stage: extraction)
       await PurchaseOrderRepository.updateStatus(tenantId, poId, "HUMAN_REVIEW", errors.join("; "));
-      await ReviewRepository.create(tenantId, {
-        entity: "purchase_order",
+      const confidence = po.extractionConfidence;
+      const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, poId);
+      const reviewPayload = {
+        entity: "purchase_order" as const,
         entityId: poId,
-        stage: "extraction",
-        status: "PENDING",
-        priority: isDuplicate ? "CRITICAL" : "HIGH",
+        stage: "extraction" as const,
+        status: "PENDING" as const,
+        priority: (isDuplicate ? "CRITICAL" : "HIGH") as any,
         reason: isDuplicate
           ? `Duplicate PO number ${po.poNumber} detected`
           : `Extraction verification failed: ${errors[0]}`,
-        requestedByAgent: "POVerificationAgent",
-        expectedValue: isDuplicate ? "Unique PO Number" : `Confidence >= 75%`,
-        actualValue: isDuplicate ? po.poNumber : `${(po.extractionConfidence * 100).toFixed(1)}%`,
+        requestedByAgent: "ExtractionAgent",
+        expectedValue: "Confidence >= 75%",
+        actualValue: `Confidence: ${Math.round(confidence * 100)}%`,
         evidence: []
-      });
+      };
+      if (existingPending) {
+        await ReviewRepository.updateReview(tenantId, existingPending._id.toString(), reviewPayload);
+      } else {
+        await ReviewRepository.create(tenantId, reviewPayload);
+      }
 
       await AuditRepository.create(tenantId, {
         agentName: "POVerificationAgent",
@@ -433,18 +440,24 @@ export class POProcessingWorkflow {
     if (hasErrors) {
       // Escalate to Human Review (stage: validation)
       await PurchaseOrderRepository.updateStatus(tenantId, poId, "HUMAN_REVIEW", errors.join("; "));
-      await ReviewRepository.create(tenantId, {
-        entity: "purchase_order",
+      const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, poId);
+      const reviewPayload = {
+        entity: "purchase_order" as const,
         entityId: poId,
-        stage: "validation",
-        status: "PENDING",
-        priority: "HIGH",
+        stage: "validation" as const,
+        status: "PENDING" as const,
+        priority: "HIGH" as any,
         reason: errors[0],
         requestedByAgent: "ValidationAgent",
         expectedValue: "Within Contract/Policy Limits",
         actualValue: `Price Variance Exception`,
         evidence: evidenceList
-      });
+      };
+      if (existingPending) {
+        await ReviewRepository.updateReview(tenantId, existingPending._id.toString(), reviewPayload);
+      } else {
+        await ReviewRepository.create(tenantId, reviewPayload);
+      }
 
       await AuditRepository.create(tenantId, {
         agentName: "ValidationAgent",
@@ -536,8 +549,8 @@ export class POProcessingWorkflow {
         poId,
         poNumber: po.poNumber,
         customerId: po.customerId || "",
-        customerName: po.customerName,
-        gstNumber: po.gstNumber,
+        customerName: po.customerName || "Customer",
+        gstNumber: po.gstNumber || "",
         status: "GENERATING",
         currency: po.currency,
         issueDate: new Date(),
@@ -637,18 +650,24 @@ export class POProcessingWorkflow {
       await InvoiceRepository.updateStatus(tenantId, invoice._id.toString(), "HUMAN_REVIEW");
       await PurchaseOrderRepository.updateStatus(tenantId, poId, "HUMAN_REVIEW", errors.join("; "));
 
-      await ReviewRepository.create(tenantId, {
-        entity: "invoice",
+      const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, invoice._id.toString());
+      const reviewPayload = {
+        entity: "invoice" as const,
         entityId: invoice._id.toString(),
-        stage: "invoice",
-        status: "PENDING",
-        priority: isDuplicateInvoice ? "CRITICAL" : "HIGH",
+        stage: "invoice" as const,
+        status: "PENDING" as const,
+        priority: (isDuplicateInvoice ? "CRITICAL" : "HIGH") as any,
         reason: errors[0],
         requestedByAgent: "InvoiceVerificationAgent",
         expectedValue: `PO Total: $${po.totalAmount.toFixed(2)}`,
         actualValue: `Invoice Total: $${invoice.totalAmount.toFixed(2)}`,
         evidence: []
-      });
+      };
+      if (existingPending) {
+        await ReviewRepository.updateReview(tenantId, existingPending._id.toString(), reviewPayload);
+      } else {
+        await ReviewRepository.create(tenantId, reviewPayload);
+      }
 
       await AuditRepository.create(tenantId, {
         agentName: "InvoiceVerificationAgent",

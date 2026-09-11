@@ -1,7 +1,9 @@
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config();
+if (process.env.NODE_ENV !== "test") {
+  dotenv.config();
+}
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
@@ -77,4 +79,14 @@ try {
   process.exit(1);
 }
 
-export const env: EnvConfig = parsedEnv;
+// Export as dynamic Proxy so runtime environment overrides in test runners (Vitest) work seamlessly
+export const env: EnvConfig = new Proxy(parsedEnv, {
+  get(target, prop: string) {
+    return (target as any)[prop];
+  },
+  set(target, prop: string, value: any) {
+    (target as any)[prop] = value;
+    process.env[prop] = typeof value === "string" ? value : String(value);
+    return true;
+  }
+});

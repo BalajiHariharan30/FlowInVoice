@@ -251,9 +251,9 @@ const InvoiceSchema = new Schema<IInvoice>(
     invoiceNumber: { type: String, required: true },
     poId: { type: String, required: true, index: true },
     poNumber: { type: String, required: true },
-    customerId: { type: String, required: true, index: true },
+    customerId: { type: String, default: "", index: true },
     customerName: { type: String, required: true },
-    gstNumber: { type: String, required: true },
+    gstNumber: { type: String, default: "" },
     status: {
       type: String,
       enum: ["DRAFT", "GENERATING", "VALIDATING", "HUMAN_REVIEW", "ISSUED", "REJECTED", "CANCELLED"],

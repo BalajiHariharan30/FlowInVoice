@@ -36,21 +36,36 @@ export function createExceptionNode(tenantId: string) {
       reason.toLowerCase().includes("math mismatch");
     const priority: ReviewPriority = isCritical ? "CRITICAL" : "HIGH";
 
-    // Create Human Review Record
-    const review = await ReviewRepository.create(tenantId, {
-      entity: "purchase_order",
-      entityId: state.poId,
-      stage,
-      status: "PENDING",
-      priority,
-      reason,
-      requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
-      expectedValue: "Within Contract/Policy Limits",
-      actualValue: reason,
-      evidence: state.evidence || []
-    });
-
-    const reviewId = review._id.toString();
+    // Check if an open PENDING review ticket already exists to prevent duplicate review accumulation
+    const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, state.poId);
+    let reviewId: string;
+    if (existingPending) {
+      reviewId = existingPending._id.toString();
+      await ReviewRepository.updateReview(tenantId, reviewId, {
+        reason,
+        priority,
+        stage,
+        actualValue: reason,
+        evidence: state.evidence || []
+      });
+      logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Updated existing open review ticket");
+    } else {
+      // Create Human Review Record
+      const review = await ReviewRepository.create(tenantId, {
+        entity: "purchase_order",
+        entityId: state.poId,
+        stage,
+        status: "PENDING",
+        priority,
+        reason,
+        requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
+        expectedValue: "Within Contract/Policy Limits",
+        actualValue: reason,
+        evidence: state.evidence || []
+      });
+      reviewId = review._id.toString();
+      logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Created new review ticket");
+    }
 
     // Mark PO in HUMAN_REVIEW status
     await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "HUMAN_REVIEW", reason);
