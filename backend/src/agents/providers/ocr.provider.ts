@@ -365,7 +365,7 @@ Rules:
         }
       ],
       inferenceConfig: {
-        maxTokens: 2048,
+        maxTokens: 8192,
         temperature: 0.0
       }
     });
@@ -378,15 +378,67 @@ Rules:
       throw new Error("AWS Bedrock returned an empty extraction result.");
     }
 
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error(`AWS Bedrock response did not contain valid JSON: ${rawText.slice(0, 200)}`);
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = parseJsonRobustly(rawText);
 
     // Sanitize and reconcile fields before Zod validation to ensure resilience against arithmetic hallucinations
     return sanitizeAndReconcileExtractedPO(parsed);
+  }
+}
+
+/**
+ * Parses JSON output from LLMs with automatic repair for truncation.
+ * If generation hit max tokens mid-array or mid-object, attempts to close unclosed brackets/braces.
+ */
+export function parseJsonRobustly(rawText: string): any {
+  const jsonMatch = rawText.match(/\{[\s\S]*/);
+  if (!jsonMatch) {
+    throw new Error(`Model response did not contain JSON: ${rawText.slice(0, 200)}`);
+  }
+
+  const candidate = jsonMatch[0].trim();
+
+  // First attempt standard parse on full text or balanced braces match
+  try {
+    const balancedMatch = rawText.match(/\{[\s\S]*\}/);
+    if (balancedMatch) {
+      return JSON.parse(balancedMatch[0]);
+    }
+  } catch {
+    // Fall through to repair attempt below
+  }
+
+  // Attempt standard parse on candidate directly
+  try {
+    return JSON.parse(candidate);
+  } catch (initialErr) {
+    // Truncation repair: Walk backwards from end of string to find a clean token boundary
+    // and close open brackets ('[') and braces ('{')
+    for (let i = candidate.length - 1; i > 10; i--) {
+      const char = candidate[i];
+      // Only cut at valid JSON boundaries: after object closing, string quote, bracket closing, or comma
+      if (char === "}" || char === '"' || char === "]" || (char >= "0" && char <= "9") || char === ",") {
+        const slice = char === "," ? candidate.slice(0, i) : candidate.slice(0, i + 1);
+        const openBraces = (slice.match(/\{/g) || []).length;
+        const closeBraces = (slice.match(/\}/g) || []).length;
+        const openBrackets = (slice.match(/\[/g) || []).length;
+        const closeBrackets = (slice.match(/\]/g) || []).length;
+
+        let fix = slice;
+        for (let b = 0; b < openBrackets - closeBrackets; b++) fix += "]";
+        for (let b = 0; b < openBraces - closeBraces; b++) fix += "}";
+
+        try {
+          const res = JSON.parse(fix);
+          if (res && typeof res === "object") {
+            logger.warn({ originalLength: candidate.length, repairedLength: fix.length }, "Repaired truncated JSON extraction successfully");
+            return res;
+          }
+        } catch {
+          // Continue backwards search
+        }
+      }
+    }
+    throw initialErr;
   }
 }
 
@@ -569,6 +621,7 @@ Rules:
             ],
             generationConfig: {
               response_mime_type: "application/json",
+              maxOutputTokens: 8192,
               temperature: 0.0
             }
           })
@@ -600,7 +653,7 @@ Rules:
       throw new Error("Gemini Vision returned an empty extraction result.");
     }
 
-    const parsed = JSON.parse(candidateText);
+    const parsed = parseJsonRobustly(candidateText);
     return sanitizeAndReconcileExtractedPO(parsed);
   }
 }
@@ -673,6 +726,7 @@ export class MistralOCRProvider implements DocumentExtractor {
           }
         ],
         response_format: { type: "json_object" },
+        max_tokens: 8192,
         temperature: 0.0
       })
     });
@@ -690,7 +744,7 @@ export class MistralOCRProvider implements DocumentExtractor {
       throw new Error("Mistral OCR returned an empty response.");
     }
 
-    const parsed = JSON.parse(contentStr);
+    const parsed = parseJsonRobustly(contentStr);
     return sanitizeAndReconcileExtractedPO(parsed);
   }
 }
