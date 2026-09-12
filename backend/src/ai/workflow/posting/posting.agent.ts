@@ -86,6 +86,12 @@ export function createPostingNode(tenantId: string) {
     const invoiceNumber = invoice?.invoiceNumber || `INV-${po.poNumber.replace(/^PO-/, "")}`;
 
     // 2. Compute Canonical Decimal Totals
+    // -----------------------------------------------------------------------------------------------------------------
+    // DECISION ON SUBTOTAL & INVOICE GENERATION:
+    // Downstream invoice generation strictly calculates subtotal = sum(item.quantity * item.unitPrice) using Decimal.js.
+    // Even if the vendor's raw OCR text stated a flawed total ($3,900.00), the issued invoice and ERP voucher strictly
+    // reflect the verified line items ($3,800.00) + applicable statutory tax ($684.00) = $4,484.00.
+    // -----------------------------------------------------------------------------------------------------------------
     const headerCurrency = (po.currency || "INR").trim().toUpperCase();
     const divergent = po.lineItems.find(
       (it: any) => it.currency && it.currency.trim().toUpperCase() !== headerCurrency

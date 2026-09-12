@@ -77,7 +77,8 @@ export const WorkflowStateAnnotation = Annotation.Root({
     default: () => []
   }),
   validationErrors: Annotation<string[]>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
+    reducer: (curr: string[], update: string[] | null | undefined) =>
+      update === null ? [] : (update !== undefined ? update : curr),
     default: () => []
   }),
 

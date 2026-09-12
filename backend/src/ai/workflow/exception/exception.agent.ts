@@ -111,6 +111,32 @@ export function createExceptionNode(tenantId: string) {
         "ExceptionAgent: Generated structured suggestedFix diagnosis for repeated exceptions"
       );
     }
+    // Bug 4 Protection: Check if an approved review ticket already exists for this PO
+    const existingApproved = previousReviews.find(
+      (r) => r.status === "APPROVED" && (r.stage === stage || r.reason === reason || !stage)
+    );
+    if (existingApproved || state.isHumanApproved || po?.status === "HUMAN_APPROVED") {
+      logger.warn(
+        { tenantId, poId: state.poId, reason, approvedReviewId: existingApproved?._id?.toString() },
+        "DUPLICATE_EXCEPTION_AFTER_APPROVAL — possible state bug: PO already has an approved review ticket. Bypassing duplicate ticket creation and force-resuming workflow to posting."
+      );
+      await AuditRepository.create(tenantId, {
+        agentName: "ExceptionAgent",
+        action: "DUPLICATE_EXCEPTION_AFTER_APPROVAL",
+        status: "SUCCESS",
+        entityId: state.poId,
+        workflowId: state.workflowId,
+        latency: Date.now() - startTime,
+        summary: `DUPLICATE_EXCEPTION_AFTER_APPROVAL — possible state bug: Bypassed duplicate review ticket creation for already-approved PO (${state.poId}). Resuming to posting.`
+      });
+      return {
+        isBusinessException: false,
+        validationErrors: [],
+        isHumanApproved: true,
+        currentStep: "posting",
+        status: "HUMAN_APPROVED"
+      };
+    }
 
     // Check if an open PENDING review ticket already exists to prevent duplicate review accumulation
     const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, state.poId);

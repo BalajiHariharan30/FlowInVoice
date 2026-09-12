@@ -59,6 +59,9 @@ export function buildOrchestrationGraph(tenantId: string) {
 
   // Router 1: Extraction -> Matching or Exception
   const shouldContinueAfterExtraction = (state: WorkflowState): "matching" | "exception" => {
+    if (state.isHumanApproved || state.skipValidation) {
+      return "matching";
+    }
     if (
       state.technicalError ||
       !state.extractedData ||
@@ -288,8 +291,8 @@ export async function runOrchestrationWorkflow(
       currentStep: isHumanApproved ? "posting" : "intake",
       status: isHumanApproved ? "HUMAN_APPROVED" : "PROCESSING",
       toolCallCount: 0,
-      validationChecks: [],
-      validationErrors: [],
+      validationChecks: isHumanApproved ? (null as any) : [],
+      validationErrors: isHumanApproved ? (null as any) : [],
       evidence: [],
       policySourceReferences: [],
       matchedLineItems: [],

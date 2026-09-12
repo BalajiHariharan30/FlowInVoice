@@ -87,6 +87,13 @@ export function createPOValidationNode(tenantId: string) {
     }
 
     // Check 1: Line item math & subtotal summation
+    // -----------------------------------------------------------------------------------------------------------------
+    // DECISION ON SUBTOTAL RECONCILIATION:
+    // In enterprise B2B accounting and statutory tax filing, line-item math (Qty * UnitPrice = LineTotal and sum(LineTotal) = Subtotal)
+    // is mathematically canonical. Once a human reviewer approves a subtotal/tax mismatch exception, downstream invoice generation uses
+    // the CORRECTED recalculated total ($3,800.00 base + tax) rather than the vendor document's erroneous typo figure ($3,900.00).
+    // When isHumanSignoff is true, this check is waived/marked resolved so the workflow resumes without re-deriving the error.
+    // -----------------------------------------------------------------------------------------------------------------
     let calcSubtotal = MoneyUtil.from(0);
     for (const item of data.lineItems) {
       const lineMath = MoneyUtil.multiply(item.quantity, item.unitPrice);
