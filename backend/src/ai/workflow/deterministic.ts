@@ -151,7 +151,8 @@ function applyUpdate(state: PipelineState, update: Partial<PipelineState>): Pipe
 export async function runDeterministicWorkflow(
   tenantId: string,
   poId: string,
-  options?: WorkflowExecutionOptions
+  options?: WorkflowExecutionOptions,
+  approvedReviewId?: string
 ): Promise<WorkflowExecutionResult> {
   const po = await PurchaseOrderRepository.findById(tenantId, poId);
   if (!po) {
@@ -203,6 +204,14 @@ export async function runDeterministicWorkflow(
   }
 
   // ── Human Review Gate ──────────────────────────────────────────────────────
+  // If the caller (approval endpoint) knows exactly which ticket was resolved,
+  // trust that ticket by ID instead of re-deriving "latest by createdAt" —
+  // stale/duplicate PENDING tickets for the same PO have caused this gate to
+  // misread approval state in the past (see collapse-duplicate-reviews.ts).
+  const review = approvedReviewId
+    ? await ReviewRepository.findById(tenantId, approvedReviewId)
+    : await ReviewRepository.findLatestByEntityId(tenantId, poId);
+
   const allReviews = await ReviewRepository.findByEntityId(tenantId, poId);
   const rejectedReview = allReviews.find((r) => r.status === "REJECTED");
 
@@ -229,7 +238,7 @@ export async function runDeterministicWorkflow(
 
   // Gate B: All-approval check (Rule 2)
   const pendingReviews = allReviews.filter((r) => r.status === "PENDING" || r.status === "ESCALATED");
-  if (pendingReviews.length > 0) {
+  if (pendingReviews.length > 0 && !(approvedReviewId && review?.status === "APPROVED")) {
     logger.info({ tenantId, poId, pendingCount: pendingReviews.length }, "DeterministicOrchestrator: awaiting all review approvals");
     return {
       poId, workflowId,
@@ -242,6 +251,7 @@ export async function runDeterministicWorkflow(
 
   // Gate C: Human-approved sign-off branch (Rule 3)
   const isHumanApproved =
+    Boolean(approvedReviewId && review?.status === "APPROVED") ||
     (allReviews.length > 0 && allReviews.every((r) => r.status === "APPROVED")) ||
     po.status === "HUMAN_APPROVED";
 

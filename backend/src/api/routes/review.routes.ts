@@ -199,58 +199,80 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
   if (review.stage === "extraction" || review.stage === "validation") {
     if (review.entity === "purchase_order") {
       const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
-      const hasExplicitCorrections = Array.isArray(correctedLineItems) && correctedLineItems.length > 0;
-      let activeLineItems = hasExplicitCorrections
-        ? correctedLineItems
-        : (po?.lineItems || []);
+      if (po) {
+        const hasExplicitCorrections = Array.isArray(correctedLineItems) && correctedLineItems.length > 0;
+        let activeLineItems = hasExplicitCorrections
+          ? correctedLineItems
+          : (po.lineItems || []);
 
-      // If no explicit human corrections provided, auto-reconcile OCR tax-inclusive line totals
-      if (!hasExplicitCorrections) {
-        activeLineItems = activeLineItems.map((li: any) => {
-          const qty = li.quantity ?? 1;
-          const price = li.unitPrice ?? 0;
-          const canonicalLineTotal = MoneyUtil.multiply(qty, price).toDecimalPlaces(2);
-          const currentTotal = MoneyUtil.from(li.lineTotal ?? 0);
-          if (canonicalLineTotal.greaterThan(0) && !MoneyUtil.equals(currentTotal, canonicalLineTotal, 0.01)) {
-            return { ...li, lineTotal: MoneyUtil.toNumber(canonicalLineTotal) };
-          }
-          return li;
+        // If no explicit human corrections provided, auto-reconcile OCR tax-inclusive line totals
+        if (!hasExplicitCorrections) {
+          activeLineItems = activeLineItems.map((li: any) => {
+            const qty = li.quantity ?? 1;
+            const price = li.unitPrice ?? 0;
+            const canonicalLineTotal = MoneyUtil.multiply(qty, price).toDecimalPlaces(2);
+            const currentTotal = MoneyUtil.from(li.lineTotal ?? 0);
+            if (canonicalLineTotal.greaterThan(0) && !MoneyUtil.equals(currentTotal, canonicalLineTotal, 0.01)) {
+              return { ...li, lineTotal: MoneyUtil.toNumber(canonicalLineTotal) };
+            }
+            return li;
+          });
+        }
+
+        const reconciledTax = reconcileTaxFromLineItems(activeLineItems);
+        const subtotalDecimal = MoneyUtil.sum(activeLineItems.map((li: any) => li.lineTotal ?? 0)).toDecimalPlaces(2);
+        const subtotal = MoneyUtil.toNumber(subtotalDecimal);
+        const effectiveTax = reconciledTax !== null ? reconciledTax : (po.tax || 0);
+        const discount = po.discount || 0;
+        const totalAmount = MoneyUtil.toNumber(MoneyUtil.calculateTotal(subtotal, effectiveTax, discount).toDecimalPlaces(2));
+
+        await PurchaseOrderRepository.updateExtraction(tenantId, review.entityId, {
+          lineItems: activeLineItems,
+          subtotal,
+          tax: effectiveTax,
+          totalAmount
         });
+
+        await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, review.entityId, "HUMAN_APPROVED", {
+          extractionConfidence: 1.0,
+          humanReviewedAt: new Date(),
+          humanReviewedBy: req.user!.email,
+          ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+        });
+
+        // Resume via LangGraph Orchestration Workflow synchronously (awaited).
+        try {
+          await runOrchestrationWorkflow(tenantId, review.entityId, undefined, review._id.toString());
+        } catch (err: any) {
+          logger.error(
+            { err, tenantId, poId: review.entityId },
+            "LangGraph workflow failed upon review approval; reopening review ticket"
+          );
+
+          await PurchaseOrderRepository.updateStatus(tenantId, review.entityId, "FAILED", err.message);
+
+          await ReviewRepository.create(tenantId, {
+            entity: review.entity,
+            entityId: review.entityId,
+            stage: review.stage,
+            status: "PENDING",
+            priority: "CRITICAL",
+            reason: `Pipeline resume failed after approval: ${err.message}`,
+            requestedByAgent: "SupervisorAgent",
+            evidence: []
+          });
+
+          await AuditRepository.create(tenantId, {
+            agentName: "SupervisorAgent",
+            action: "RESUME_FAILED_AFTER_APPROVAL",
+            status: "FAILURE",
+            entityId: review.entityId,
+            workflowId: "manual_review",
+            summary: `Workflow resume failed after human approval by ${req.user!.email}: ${err.message}`
+          });
+        }
       }
-
-      const reconciledTax = reconcileTaxFromLineItems(activeLineItems);
-      const subtotalDecimal = MoneyUtil.sum(activeLineItems.map((li: any) => li.lineTotal ?? 0)).toDecimalPlaces(2);
-      const subtotal = MoneyUtil.toNumber(subtotalDecimal);
-      const effectiveTax = reconciledTax !== null ? reconciledTax : (po?.tax || 0);
-      const discount = po?.discount || 0;
-      const totalAmount = MoneyUtil.toNumber(MoneyUtil.calculateTotal(subtotal, effectiveTax, discount).toDecimalPlaces(2));
-
-      await PurchaseOrderRepository.updateExtraction(tenantId, review.entityId, {
-        lineItems: activeLineItems,
-        subtotal,
-        tax: effectiveTax,
-        totalAmount
-      });
-
-      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, review.entityId, "HUMAN_APPROVED", {
-        extractionConfidence: 1.0,
-        humanReviewedAt: new Date(),
-        humanReviewedBy: req.user!.email,
-        ...(reconciledTax !== null ? { tax: reconciledTax } : {})
-      });
     }
-
-    // Resume via LangGraph Orchestration Workflow asynchronously directly from checkpoint
-    setImmediate(async () => {
-      try {
-        await runOrchestrationWorkflow(tenantId, review.entityId);
-      } catch (err: any) {
-        logger.error(
-          { err, tenantId, poId: review.entityId },
-          "LangGraph workflow failed upon review approval"
-        );
-      }
-    });
   } else if (review.stage === "invoice") {
     // Advance invoice to ISSUED
     await InvoiceRepository.updateStatus(tenantId, review.entityId, "ISSUED", {
@@ -272,6 +294,7 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. All exceptions resolved; workflow resumed.`
   });
 
+  const finalPo = await PurchaseOrderRepository.findById(tenantId, review.entityId);
   res.status(200).json({
     id: resolved!._id.toString(),
     entity: resolved!.entity,
@@ -280,7 +303,9 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     status: resolved!.status,
     resolutionNotes: resolved!.resolutionNotes,
     resolvedBy: resolved!.resolvedBy,
-    resolvedAt: resolved!.resolvedAt
+    resolvedAt: resolved!.resolvedAt,
+    resumeStatus: review.stage === "invoice" ? "COMPLETED" : (finalPo?.status === "FAILED" ? "FAILED" : "COMPLETED"),
+    poStatus: finalPo?.status
   });
 }
 

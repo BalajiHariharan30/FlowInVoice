@@ -410,6 +410,16 @@ const HumanReviewSchema = new Schema<IHumanReview>(
   { timestamps: true }
 );
 HumanReviewSchema.index({ tenantId: 1, status: 1 });
+// Prevents two PENDING review tickets from existing for the same PO at once.
+// exception.agent.ts does a findPendingByEntityId-then-create check, which has
+// a race window under concurrent workflow runs; this index turns that race
+// into a catchable duplicate-key error instead of silently creating a second
+// ticket (which was the root cause of stale/duplicate tickets requiring the
+// collapse-duplicate-reviews.ts cleanup script).
+HumanReviewSchema.index(
+  { tenantId: 1, entityId: 1 },
+  { unique: true, partialFilterExpression: { status: "PENDING" } }
+);
 HumanReviewSchema.index({ tenantId: 1, entityId: 1, stage: 1 });
 HumanReviewSchema.index({ tenantId: 1, dedupKey: 1 }, { unique: true, sparse: true });
 

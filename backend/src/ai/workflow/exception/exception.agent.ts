@@ -174,21 +174,67 @@ export function createExceptionNode(tenantId: string) {
       );
     } else {
       // Create Human Review Record
-      const review = await ReviewRepository.create(tenantId, {
-        entity: "purchase_order",
-        entityId: state.poId,
-        stage,
-        status: "PENDING",
-        priority,
-        reason,
-        requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
-        expectedValue: "Within Contract/Policy Limits",
-        actualValue: reason,
-        evidence: state.evidence || [],
-        ...(suggestedFix ? { suggestedFix } : {})
-      });
-      reviewId = review._id.toString();
-      logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Created new review ticket");
+      try {
+        const review = await ReviewRepository.create(tenantId, {
+          entity: "purchase_order",
+          entityId: state.poId,
+          stage,
+          status: "PENDING",
+          priority,
+          reason,
+          requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
+          expectedValue: "Within Contract/Policy Limits",
+          actualValue: reason,
+          evidence: state.evidence || [],
+          ...(suggestedFix ? { suggestedFix } : {})
+        });
+        reviewId = review._id.toString();
+        logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Created new review ticket");
+      } catch (err: any) {
+        // Handle MongoServerError code 11000 from unique partial index { tenantId, entityId } (status: "PENDING")
+        if (err.code === 11000 || (err.name === "MongoServerError" && err.code === 11000)) {
+          logger.warn(
+            { tenantId, poId: state.poId, err: err.message },
+            "ExceptionAgent: Concurrent duplicate pending review ticket race caught; re-fetching existing ticket"
+          );
+          const concurrentPending = await ReviewRepository.findPendingByEntityId(tenantId, state.poId);
+          if (concurrentPending) {
+            reviewId = concurrentPending._id.toString();
+
+            const existingEvidence = concurrentPending.evidence || [];
+            const newEvidence = state.evidence || [];
+            const mergedEvidence = [...existingEvidence];
+
+            for (const ev of newEvidence) {
+              const isDuplicate = mergedEvidence.some(
+                (e) =>
+                  (e.chunkId && ev.chunkId && e.chunkId === ev.chunkId) ||
+                  (e.documentId === ev.documentId && e.section === ev.section)
+              );
+              if (!isDuplicate) {
+                mergedEvidence.push(ev);
+              }
+            }
+
+            await ReviewRepository.updateReview(tenantId, reviewId, {
+              reason,
+              priority,
+              stage,
+              actualValue: reason,
+              evidence: mergedEvidence,
+              ...(suggestedFix ? { suggestedFix } : {})
+            });
+            logger.info(
+              { tenantId, poId: state.poId, reviewId, evidenceCount: mergedEvidence.length },
+              "ExceptionAgent: Updated concurrently created open review ticket with merged evidence"
+            );
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Mark PO in HUMAN_REVIEW status
