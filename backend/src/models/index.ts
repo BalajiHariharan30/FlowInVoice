@@ -341,6 +341,7 @@ const DiscrepancyItemSchema = new Schema(
 
 export interface IHumanReview extends Document {
   tenantId: string;
+  dedupKey?: string;
   entity: "purchase_order" | "invoice";
   entityId: string;
   stage: ReviewStage;
@@ -364,6 +365,7 @@ export interface IHumanReview extends Document {
 const HumanReviewSchema = new Schema<IHumanReview>(
   {
     tenantId: { type: String, required: true, index: true },
+    dedupKey: { type: String, index: true },
     entity: { type: String, enum: ["purchase_order", "invoice"], required: true },
     entityId: { type: String, required: true, index: true },
     stage: { type: String, enum: ["extraction", "validation", "invoice"], required: true, index: true },
@@ -385,6 +387,7 @@ const HumanReviewSchema = new Schema<IHumanReview>(
 );
 HumanReviewSchema.index({ tenantId: 1, status: 1 });
 HumanReviewSchema.index({ tenantId: 1, entityId: 1, stage: 1 });
+HumanReviewSchema.index({ tenantId: 1, dedupKey: 1 }, { unique: true, sparse: true });
 
 // -------------------------------------------------------------
 // 6. Validation Result Model
