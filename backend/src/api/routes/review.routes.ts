@@ -9,7 +9,7 @@ import {
   reconcileTaxFromLineItems
 } from "../../repositories/index.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
-import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
+import { runOrchestrationWorkflow } from "../../ai/workflow/index.js";
 import { ReanalysisService } from "../../ai/workflow/reanalysis.service.js";
 import { MoneyUtil } from "../../utils/money.js";
 import { logger } from "../../utils/logger.js";

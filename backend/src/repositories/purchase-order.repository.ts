@@ -166,6 +166,29 @@ export class PurchaseOrderRepository {
     return doc;
   }
 
+  /** Deterministic engine: persist pipeline state to the PO document. */
+  static async savePipelineState(tenantId: string, id: string, state: Record<string, any>): Promise<void> {
+    if (isDbConnected()) {
+      if (!mongoose.isValidObjectId(id)) return;
+      await PurchaseOrder.findOneAndUpdate(
+        { tenantId, _id: id },
+        { $set: { pipelineState: state, updatedAt: new Date() } }
+      );
+      return;
+    }
+    const doc = inMemory.pos.get(id);
+    if (doc && doc.tenantId === tenantId) {
+      (doc as any).pipelineState = state;
+      doc.updatedAt = new Date();
+    }
+  }
+
+  /** Deterministic engine: load persisted pipeline state from the PO document. */
+  static async loadPipelineState(tenantId: string, id: string): Promise<Record<string, any> | null> {
+    const po = await this.findById(tenantId, id);
+    return (po as any)?.pipelineState || null;
+  }
+
   static async updateExtraction(
     tenantId: string,
     id: string,

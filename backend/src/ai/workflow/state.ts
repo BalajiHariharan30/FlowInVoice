@@ -1,4 +1,3 @@
-import { Annotation } from "@langchain/langgraph";
 import { ExtractedPOData } from "../../agents/providers/ocr.provider.js";
 import { EvidenceItem } from "../../types/index.js";
 
@@ -25,164 +24,58 @@ export interface MatchedLineItem {
 }
 
 /**
- * LangGraph State Annotation for FlowInvoice AI PO/Invoice Workflow.
- * Bounded: contains IDs, flags, and structured data only (no full documents, secrets, or raw buffers).
+ * Plain TypeScript WorkflowState interface for FlowInvoice AI PO/Invoice Workflow.
+ * Replaces LangGraph StateAnnotation with deterministic state representation.
  */
-export const WorkflowStateAnnotation = Annotation.Root({
-  // Immutable tenant & entity identifiers (populated by Express entrypoint, read-only to nodes)
-  tenantId: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => ""
-  }),
-  poId: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => ""
-  }),
-  workflowId: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => ""
-  }),
-  documentName: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => ""
-  }),
-  s3Key: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => ""
-  }),
+export interface WorkflowState {
+  // Immutable tenant & entity identifiers
+  tenantId: string;
+  poId: string;
+  workflowId: string;
+  documentName: string;
+  s3Key: string;
 
   // Agent 1: Extraction state
-  extractedData: Annotation<ExtractedPOData | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
+  extractedData?: ExtractedPOData;
 
   // Agent 2: Matching state
-  customerId: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  customerName: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  matchedLineItems: Annotation<MatchedLineItem[]>({
-    reducer: (_, update) => update,
-    default: () => []
-  }),
+  customerId?: string;
+  customerName?: string;
+  matchedLineItems: MatchedLineItem[];
 
   // Agent 3: PO Verification & Math checks
-  validationChecks: Annotation<WorkflowValidationCheck[]>({
-    reducer: (curr, update: WorkflowValidationCheck[] | null | undefined) =>
-      update === null ? [] : (update !== undefined ? update : curr),
-    default: () => []
-  }),
-  validationErrors: Annotation<string[]>({
-    reducer: (curr: string[], update: string[] | null | undefined) =>
-      update === null ? [] : (update !== undefined ? update : curr),
-    default: () => []
-  }),
+  validationChecks: WorkflowValidationCheck[];
+  validationErrors: string[];
 
   // Agent 4: Policy & Contract Evaluation
-  evidence: Annotation<EvidenceItem[]>({
-    reducer: (curr, update: EvidenceItem[] | null | undefined) =>
-      update === null ? [] : (update !== undefined ? update : curr),
-    default: () => []
-  }),
-  allowedVariancePct: Annotation<number>({
-    reducer: (_, update) => update,
-    default: () => 10.0
-  }),
-  policySourceReferences: Annotation<string[]>({
-    reducer: (curr, update: string[] | null | undefined) =>
-      update === null ? [] : (update !== undefined ? Array.from(new Set([...curr, ...update])) : curr),
-    default: () => []
-  }),
-  noActiveContract: Annotation<boolean>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
-    default: () => false
-  }),
-  requiresCatalogReview: Annotation<boolean>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
-    default: () => false
-  }),
+  evidence: EvidenceItem[];
+  allowedVariancePct: number;
+  policySourceReferences: string[];
+  noActiveContract: boolean;
+  requiresCatalogReview: boolean;
 
   // Agent 5: Approval Decision state
-  approvalRequired: Annotation<boolean>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
-    default: () => false
-  }),
-  approvalReason: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
+  approvalRequired: boolean;
+  approvalReason?: string;
 
   // Agent 6: Exception / Review ticket
-  reviewId: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  isBusinessException: Annotation<boolean>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
-    default: () => false
-  }),
+  reviewId?: string;
+  isBusinessException: boolean;
 
   // Agent 7: Posting & ERP state
-  invoiceId: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  invoiceNumber: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  s3PdfKey: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  erpPostingId: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
+  invoiceId?: string;
+  invoiceNumber?: string;
+  s3PdfKey?: string;
+  erpPostingId?: string;
 
   // Lifecycle & Telemetry tracking
-  status: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => "PROCESSING"
-  }),
-  currentStep: Annotation<string>({
-    reducer: (_, update) => update,
-    default: () => "intake"
-  }),
-  failureReason: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  toolCallCount: Annotation<number>({
-    reducer: (curr, update) => curr + update,
-    default: () => 0
-  }),
-  stepRetries: Annotation<Record<string, number>>({
-    reducer: (curr, update: Record<string, number> | null | undefined) =>
-      update === null ? {} : (update !== undefined ? { ...curr, ...update } : curr),
-    default: () => ({})
-  }),
-  technicalError: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  }),
-  isHumanApproved: Annotation<boolean>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
-    default: () => false
-  }),
-  skipValidation: Annotation<boolean>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
-    default: () => false
-  }),
-  resumedFromStep: Annotation<string | undefined>({
-    reducer: (_, update) => update,
-    default: () => undefined
-  })
-});
-
-export type WorkflowState = typeof WorkflowStateAnnotation.State;
+  status: string;
+  currentStep: string;
+  failureReason?: string;
+  toolCallCount: number;
+  stepRetries: Record<string, number>;
+  technicalError?: string;
+  isHumanApproved: boolean;
+  skipValidation: boolean;
+  resumedFromStep?: string;
+}

@@ -3,7 +3,7 @@ import { asyncHandler } from "../middleware/error-handler.js";
 import { authenticate } from "../../auth/auth.middleware.js";
 import { InvoiceRepository, PurchaseOrderRepository } from "../../repositories/index.js";
 import { StorageService } from "../../storage/s3.service.js";
-import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
+import { runOrchestrationWorkflow } from "../../ai/workflow/index.js";
 import { InvoiceStatus } from "../../types/index.js";
 
 export const invoiceRouter = Router();

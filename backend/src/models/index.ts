@@ -135,6 +135,8 @@ export interface IPurchaseOrder extends Document {
   createdBy?: string;
   previousVersionId?: string;
   version?: number;
+  /** Deterministic engine: serialised PipelineState stored directly on the PO (single source of truth). */
+  pipelineState?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -194,7 +196,9 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
     deletedAt: { type: Date },
     createdBy: { type: String },
     previousVersionId: { type: String, index: true },
-    version: { type: Number, default: 1 }
+    version: { type: Number, default: 1 },
+    /** Deterministic engine: serialised PipelineState stored directly on the PO document. */
+    pipelineState: { type: Schema.Types.Mixed }
   },
   { timestamps: true }
 );

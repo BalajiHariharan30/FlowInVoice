@@ -2,7 +2,7 @@ import { Queue, Worker, Job } from "bullmq";
 import Redis, { RedisOptions } from "ioredis";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
-import { runOrchestrationWorkflow } from "../ai/workflow/graph.js";
+import { runOrchestrationWorkflow } from "../ai/workflow/index.js";
 import { PurchaseOrderRepository, ReviewRepository } from "../repositories/index.js";
 
 export interface POProcessingJobData {
