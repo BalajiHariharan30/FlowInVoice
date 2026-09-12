@@ -41,12 +41,14 @@ export function createPolicyEvaluationNode(tenantId: string) {
     }
 
     const matchedItems = state.matchedLineItems || [];
+    // Hard cap: absolute maximum regardless of PO size to prevent resource exhaustion
+    // from hostile/corrupt inputs with thousands of line items.
+    const MAX_POLICY_TOOL_CALLS = 20;
     const evidenceList: EvidenceItem[] = [];
     const errors: string[] = [];
     const checks: any[] = [];
     const sourceReferences: string[] = [];
     let toolCallCount = 0;
-    const maxToolCalls = Math.min(Math.max(matchedItems.length * 2, 6), 25);
 
     for (const item of matchedItems) {
       // If price matches catalog exactly, record pass
@@ -63,7 +65,7 @@ export function createPolicyEvaluationNode(tenantId: string) {
       await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "RAG_CHECKING");
 
       let noActiveContract = false;
-      if (toolCallCount < maxToolCalls && state.customerId) {
+      if (toolCallCount < MAX_POLICY_TOOL_CALLS && state.customerId) {
         toolCallCount++;
         const contractClauses = await AgentTools.searchContractClauses(
           tenantId,
@@ -91,7 +93,7 @@ export function createPolicyEvaluationNode(tenantId: string) {
       // Agentic RAG Step B: Policy Search
       await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "COMPLIANCE_CHECKING");
 
-      if (toolCallCount < maxToolCalls) {
+      if (toolCallCount < MAX_POLICY_TOOL_CALLS) {
         toolCallCount++;
         const policyClauses = await AgentTools.searchPolicyClauses(
           tenantId,
