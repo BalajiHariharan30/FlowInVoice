@@ -73,7 +73,8 @@ export const WorkflowStateAnnotation = Annotation.Root({
 
   // Agent 3: PO Verification & Math checks
   validationChecks: Annotation<WorkflowValidationCheck[]>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
+    reducer: (curr, update: WorkflowValidationCheck[] | null | undefined) =>
+      update === null ? [] : (update !== undefined ? update : curr),
     default: () => []
   }),
   validationErrors: Annotation<string[]>({
@@ -84,7 +85,8 @@ export const WorkflowStateAnnotation = Annotation.Root({
 
   // Agent 4: Policy & Contract Evaluation
   evidence: Annotation<EvidenceItem[]>({
-    reducer: (curr, update) => (update !== undefined ? update : curr),
+    reducer: (curr, update: EvidenceItem[] | null | undefined) =>
+      update === null ? [] : (update !== undefined ? update : curr),
     default: () => []
   }),
   allowedVariancePct: Annotation<number>({
@@ -92,7 +94,8 @@ export const WorkflowStateAnnotation = Annotation.Root({
     default: () => 10.0
   }),
   policySourceReferences: Annotation<string[]>({
-    reducer: (curr, update) => (update !== undefined ? Array.from(new Set([...curr, ...update])) : curr),
+    reducer: (curr, update: string[] | null | undefined) =>
+      update === null ? [] : (update !== undefined ? Array.from(new Set([...curr, ...update])) : curr),
     default: () => []
   }),
   noActiveContract: Annotation<boolean>({
@@ -160,7 +163,8 @@ export const WorkflowStateAnnotation = Annotation.Root({
     default: () => 0
   }),
   stepRetries: Annotation<Record<string, number>>({
-    reducer: (curr, update) => ({ ...curr, ...update }),
+    reducer: (curr, update: Record<string, number> | null | undefined) =>
+      update === null ? {} : (update !== undefined ? { ...curr, ...update } : curr),
     default: () => ({})
   }),
   technicalError: Annotation<string | undefined>({

@@ -140,6 +140,32 @@ export class PurchaseOrderRepository {
     return doc;
   }
 
+  static async claimForProcessing(tenantId: string, id: string): Promise<IPurchaseOrder | null> {
+    if (isDbConnected()) {
+      if (!mongoose.isValidObjectId(id)) return null;
+      return PurchaseOrder.findOneAndUpdate(
+        {
+          tenantId,
+          _id: id,
+          status: { $in: ["HUMAN_APPROVED", "PROCESSING", "VALIDATING"] }
+        },
+        {
+          $set: {
+            status: "INVOICE_GENERATING",
+            updatedAt: new Date()
+          }
+        },
+        { new: true }
+      );
+    }
+    const doc = inMemory.pos.get(id);
+    if (!doc || doc.tenantId !== tenantId) return null;
+    if (!["HUMAN_APPROVED", "PROCESSING", "VALIDATING"].includes(doc.status)) return null;
+    doc.status = "INVOICE_GENERATING";
+    doc.updatedAt = new Date();
+    return doc;
+  }
+
   static async updateExtraction(
     tenantId: string,
     id: string,

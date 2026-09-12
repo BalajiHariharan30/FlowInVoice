@@ -342,6 +342,13 @@ export async function runOrchestrationWorkflow(
       }
     }
 
+    if (finalState.status === "COMPLETED") {
+      const checkpointer = new MongoCheckpointSaver(tenantId);
+      await checkpointer.deleteThread(poId).catch((e) => {
+        logger.warn({ e, tenantId, poId }, "Failed to prune checkpoint on terminal status");
+      });
+    }
+
     return {
       poId,
       workflowId,
