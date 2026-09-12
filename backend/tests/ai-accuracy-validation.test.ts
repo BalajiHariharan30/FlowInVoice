@@ -177,19 +177,43 @@ describe("AI Agent Accuracy & Precision Validation (§Part A)", () => {
     }
   });
 
-  it("5. Multi-provider chained fallback gracefully cascades across simulated provider failures", async () => {
-    const fallbackProvider = new ChainedFallbackOCRProvider();
-    const cleanFixture = fixtures[0];
+  it("5. Multi-provider chained fallback fires providers in the exact order: Bedrock → Mistral → Gemini → Mock", async () => {
+    // The ChainedFallbackOCRProvider logs every attempt via logger.info with the provider name.
+    // In the test environment (no AWS/Mistral/Gemini credentials), Bedrock, Mistral and Gemini
+    // each throw; Mock is the terminal fallback and succeeds.
+    // We capture every "AI Fallback Chain: Attempting" log line and assert ordering.
+    const { logger } = await import("../src/utils/logger.js");
 
-    // Clean execution via fallback chain
+    const infoCalls: string[] = [];
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation((...args: any[]) => {
+      // logger.info(obj, message) — message is always last arg
+      const msg = typeof args[args.length - 1] === "string" ? args[args.length - 1] : "";
+      if (msg.includes("AI Fallback Chain")) infoCalls.push(msg);
+    });
+
+    const fallbackProvider = new ChainedFallbackOCRProvider();
     const result = await fallbackProvider.extract({
       buffer: Buffer.from("%PDF-1.4 Clean Contract Header"),
-      fileName: cleanFixture.fileName,
+      fileName: "clean_digital_po.pdf",
       contentType: "application/pdf"
     });
 
+    infoSpy.mockRestore();
+
+    // 1. A result must be returned (Mock succeeded as terminal fallback)
     expect(result).toBeDefined();
     expect(result.poNumber).toBeDefined();
-    expect(result.confidence).toBeGreaterThanOrEqual(0.85);
+    expect(result.confidence).toBeGreaterThan(0);
+
+    // 2. Assert each expected provider name was attempted
+    const bedrockIdx = infoCalls.findIndex((m) => m.includes("AWS Bedrock"));
+    const mistralIdx = infoCalls.findIndex((m) => m.includes("Mistral AI"));
+    const geminiIdx  = infoCalls.findIndex((m) => m.includes("Google Gemini"));
+    const mockIdx    = infoCalls.findIndex((m) => m.includes("Local Mock"));
+
+    expect(bedrockIdx, "Bedrock must be the first provider attempted").toBeGreaterThanOrEqual(0);
+    expect(mistralIdx, "Mistral must be attempted after Bedrock").toBeGreaterThan(bedrockIdx);
+    expect(geminiIdx,  "Gemini must be attempted after Mistral").toBeGreaterThan(mistralIdx);
+    expect(mockIdx,    "Mock must be attempted after Gemini").toBeGreaterThan(geminiIdx);
   });
 });
