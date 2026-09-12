@@ -11,6 +11,7 @@ import {
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
 import { runOrchestrationWorkflow } from "../../ai/workflow/index.js";
 import { ReanalysisService } from "../../ai/workflow/reanalysis.service.js";
+import { QueueManager } from "../../workers/queue.js";
 import { MoneyUtil } from "../../utils/money.js";
 import { logger } from "../../utils/logger.js";
 
@@ -240,37 +241,14 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
           ...(reconciledTax !== null ? { tax: reconciledTax } : {})
         });
 
-        // Resume via LangGraph Orchestration Workflow synchronously (awaited).
-        try {
-          await runOrchestrationWorkflow(tenantId, review.entityId, undefined, review._id.toString());
-        } catch (err: any) {
-          logger.error(
-            { err, tenantId, poId: review.entityId },
-            "LangGraph workflow failed upon review approval; reopening review ticket"
-          );
-
-          await PurchaseOrderRepository.updateStatus(tenantId, review.entityId, "FAILED", err.message);
-
-          await ReviewRepository.create(tenantId, {
-            entity: review.entity,
-            entityId: review.entityId,
-            stage: review.stage,
-            status: "PENDING",
-            priority: "CRITICAL",
-            reason: `Pipeline resume failed after approval: ${err.message}`,
-            requestedByAgent: "SupervisorAgent",
-            evidence: []
-          });
-
-          await AuditRepository.create(tenantId, {
-            agentName: "SupervisorAgent",
-            action: "RESUME_FAILED_AFTER_APPROVAL",
-            status: "FAILURE",
-            entityId: review.entityId,
-            workflowId: "manual_review",
-            summary: `Workflow resume failed after human approval by ${req.user!.email}: ${err.message}`
-          });
-        }
+        // Do NOT await the pipeline inline — that's what caused the crash.
+        // Enqueue it; retries and crash-survival are handled by QueueManager.
+        const resumeJobId = await QueueManager.addPOResumeJob(
+          tenantId,
+          review.entityId,
+          review._id.toString()
+        );
+        logger.info({ tenantId, poId: review.entityId, resumeJobId }, "Queued pipeline resume after approval");
       }
     }
   } else if (review.stage === "invoice") {
@@ -294,7 +272,6 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. All exceptions resolved; workflow resumed.`
   });
 
-  const finalPo = await PurchaseOrderRepository.findById(tenantId, review.entityId);
   res.status(200).json({
     id: resolved!._id.toString(),
     entity: resolved!.entity,
@@ -304,8 +281,7 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     resolutionNotes: resolved!.resolutionNotes,
     resolvedBy: resolved!.resolvedBy,
     resolvedAt: resolved!.resolvedAt,
-    resumeStatus: review.stage === "invoice" ? "COMPLETED" : (finalPo?.status === "FAILED" ? "FAILED" : "COMPLETED"),
-    poStatus: finalPo?.status
+    resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
   });
 }
 

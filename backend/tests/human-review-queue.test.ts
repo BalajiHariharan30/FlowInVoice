@@ -319,7 +319,7 @@ describe("Human Review Queue Removal on Approve/Reject", () => {
     expect(afterReject.some((r) => r.id === duplicateReview._id.toString())).toBe(false);
   });
 
-  it("reopens a CRITICAL review ticket and sets PO to FAILED when workflow resume throws upon approval", async () => {
+  it("enqueues resume with QUEUED status and reopens a CRITICAL review ticket when resume retries exhaust", async () => {
     const po = await PurchaseOrderRepository.create(tenantId, {
       poNumber: "PO-RESUME-FAIL-TEST",
       customerName: "Resume Fail Corp",
@@ -352,31 +352,34 @@ describe("Human Review Queue Removal on Approve/Reject", () => {
       requestedByAgent: "ValidationAgent"
     });
 
-    const workflowModule = await import("../src/ai/workflow/index.js");
-    vi.spyOn(workflowModule, "runOrchestrationWorkflow").mockRejectedValueOnce(
-      new Error("Simulated posting ERP gateway connection timed out")
-    );
-
     const approveRes = await request(app)
       .post(`/api/v1/reviews/${review._id.toString()}/approve`)
       .set("Authorization", `Bearer ${token}`)
       .send({ resolutionNotes: "Approved despite variance" });
 
-    // 1. Approve endpoint still returns 200 with resumeStatus: "FAILED"
+    // 1. Approve endpoint returns 200 with resumeStatus: "QUEUED" (decoupled from async execution)
     expect(approveRes.status).toBe(200);
     expect(approveRes.body.status).toBe("APPROVED");
-    expect(approveRes.body.resumeStatus).toBe("FAILED");
-    expect(approveRes.body.poStatus).toBe("FAILED");
+    expect(approveRes.body.resumeStatus).toBe("QUEUED");
 
-    // 2. The PO status must be FAILED
+    // 2. Simulate all retries exhausted via handleResumeExhausted
+    const { handleResumeExhausted } = await import("../src/ai/workflow/resume-failure-handler.js");
+    await handleResumeExhausted(
+      tenantId,
+      po._id.toString(),
+      review._id.toString(),
+      new Error("Simulated posting ERP gateway connection timed out")
+    );
+
+    // 3. The PO status must be FAILED
     const updatedPo = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
     expect(updatedPo?.status).toBe("FAILED");
 
-    // 3. A new review ticket exists with status PENDING and priority CRITICAL
+    // 4. A new review ticket exists with status PENDING and priority CRITICAL
     const allReviews = await ReviewRepository.findByEntityId(tenantId, po._id.toString());
     const reopenedReview = allReviews.find((r) => r.status === "PENDING" && r.priority === "CRITICAL");
     expect(reopenedReview).toBeDefined();
-    expect(reopenedReview?.reason).toContain("Pipeline resume failed after approval: Simulated posting ERP gateway connection timed out");
+    expect(reopenedReview?.reason).toContain("Pipeline resume failed after approval (all retries exhausted): Simulated posting ERP gateway connection timed out");
     expect(reopenedReview?.requestedByAgent).toBe("SupervisorAgent");
   });
 });

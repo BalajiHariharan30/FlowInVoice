@@ -11,6 +11,12 @@ export interface POProcessingJobData {
   attempt?: number;
 }
 
+export interface POResumeJobData {
+  tenantId: string;
+  poId: string;
+  approvedReviewId: string;
+}
+
 export interface QueueHealthInfo {
   status: "connected" | "connecting" | "degraded_in_memory";
   mode: "bullmq" | "in-memory";
@@ -125,17 +131,37 @@ export class QueueManager {
         // Initialize Worker with dedicated connection
         this.poWorker = new Worker(
           "po-processing",
-          async (job: Job<POProcessingJobData>) => {
-            logger.info({ jobId: job.id, data: job.data }, "Processing PO job via live BullMQ worker");
-            const po = await PurchaseOrderRepository.findById(job.data.tenantId, job.data.poId);
-            if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
-              logger.info({ poId: job.data.poId, status: po?.status }, "BullMQ worker: Skipping execution for non-processable PO");
+          async (job: Job<POProcessingJobData | POResumeJobData>) => {
+            if (job.name === "resume-po") {
+              const data = job.data as POResumeJobData;
+              logger.info({ jobId: job.id, data }, "Processing PO resume job via live BullMQ worker");
+              const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
+              await runOrchestrationWorkflow(data.tenantId, data.poId, undefined, data.approvedReviewId);
               return;
             }
-            await runOrchestrationWorkflow(job.data.tenantId, job.data.poId);
+            const procData = job.data as POProcessingJobData;
+            logger.info({ jobId: job.id, data: procData }, "Processing PO job via live BullMQ worker");
+            const po = await PurchaseOrderRepository.findById(procData.tenantId, procData.poId);
+            if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
+              logger.info({ poId: procData.poId, status: po?.status }, "BullMQ worker: Skipping execution for non-processable PO");
+              return;
+            }
+            await runOrchestrationWorkflow(procData.tenantId, procData.poId);
           },
           { connection: this.workerConnection }
         );
+
+        // After all BullMQ retry attempts are exhausted for a resume job,
+        // reopen a review ticket instead of letting it disappear silently.
+        this.poWorker.on("failed", async (job, err) => {
+          if (!job) return;
+          const attemptsLimit = job.opts.attempts || 1;
+          if (job.name === "resume-po" && job.attemptsMade >= attemptsLimit) {
+            const data = job.data as POResumeJobData;
+            const { handleResumeExhausted } = await import("../ai/workflow/resume-failure-handler.js");
+            await handleResumeExhausted(data.tenantId, data.poId, data.approvedReviewId, err as Error);
+          }
+        });
 
         this.isMock = false;
         this.lastError = null;
@@ -294,6 +320,48 @@ export class QueueManager {
         logger.error({ e: e.message, tenantId, poId }, "Async PO processing error");
       }
     }, 300);
+
+    return jobId;
+  }
+
+  /**
+   * Enqueues the post-approval pipeline resume. Never runs inline on the
+   * HTTP request — this is the fix for the approve-endpoint crash. With
+   * BullMQ available, retries (3 attempts, exponential backoff) are handled
+   * by BullMQ itself and survive a process crash since state lives in Redis.
+   * Without Redis, we retry in-process ourselves so the same safety net
+   * still applies, just without crash-survival.
+   */
+  static async addPOResumeJob(tenantId: string, poId: string, approvedReviewId: string): Promise<string> {
+    const jobId = `resume:${tenantId}:${poId}:${Date.now()}`;
+
+    if (!this.isMock && this.poQueue) {
+      try {
+        await this.poQueue.add("resume-po", { tenantId, poId, approvedReviewId }, { jobId });
+        logger.info({ jobId, queue: "po-processing" }, "Successfully enqueued PO resume job to BullMQ");
+        return jobId;
+      } catch (err: any) {
+        logger.warn({ err: err.message, jobId }, "BullMQ resume enqueue failed, executing with asynchronous runner");
+      }
+    }
+
+    const MAX_ATTEMPTS = 3;
+    const runWithRetry = async (attempt: number): Promise<void> => {
+      try {
+        const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
+        logger.info({ tenantId, poId, jobId, attempt }, "Async Queue: Starting PO resume workflow");
+        await runOrchestrationWorkflow(tenantId, poId, undefined, approvedReviewId);
+      } catch (e: any) {
+        logger.error({ e: e.message, tenantId, poId, attempt }, "Async PO resume error");
+        if (attempt < MAX_ATTEMPTS) {
+          setTimeout(() => runWithRetry(attempt + 1), Math.pow(2, attempt) * 1000);
+        } else {
+          const { handleResumeExhausted } = await import("../ai/workflow/resume-failure-handler.js");
+          await handleResumeExhausted(tenantId, poId, approvedReviewId, e);
+        }
+      }
+    };
+    setTimeout(() => runWithRetry(1), 300);
 
     return jobId;
   }
