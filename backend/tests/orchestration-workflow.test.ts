@@ -533,4 +533,58 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
       expect(updatedPo?.status).toBe("COMPLETED");
     });
   });
+
+  describe("7. Router 1 Post-Extraction Human-Approval Defense", () => {
+    it("returns 'matching' instead of 'exception' when isHumanApproved is true even if extractedData confidence is low or missing", async () => {
+      const { shouldContinueAfterExtraction } = await import("../src/ai/workflow/graph.js");
+
+      // Case 1: Low confidence (0.3) with isHumanApproved: true
+      const stateLowConfidence: any = {
+        tenantId: "tenant_alpha",
+        poId: "po_test_router_1",
+        workflowId: "wf_test_router_1",
+        documentName: "test.pdf",
+        s3Key: "pos/test.pdf",
+        isHumanApproved: true,
+        extractedData: {
+          confidence: 0.3,
+          poNumber: "PENDING-PO-01",
+          customerName: "Test Customer"
+        }
+      };
+
+      const decisionLowConfidence = shouldContinueAfterExtraction(stateLowConfidence);
+      expect(decisionLowConfidence).toBe("matching");
+
+      // Case 2: Missing extractedData (undefined) with isHumanApproved: true
+      const stateNoExtractedData: any = {
+        tenantId: "tenant_alpha",
+        poId: "po_test_router_2",
+        workflowId: "wf_test_router_2",
+        documentName: "test.pdf",
+        s3Key: "pos/test.pdf",
+        isHumanApproved: true,
+        extractedData: undefined
+      };
+
+      const decisionNoExtractedData = shouldContinueAfterExtraction(stateNoExtractedData);
+      expect(decisionNoExtractedData).toBe("matching");
+
+      // Case 3: Without human approval, low confidence (<0.75) routes to 'exception'
+      const stateNotApproved: any = {
+        tenantId: "tenant_alpha",
+        poId: "po_test_router_3",
+        workflowId: "wf_test_router_3",
+        documentName: "test.pdf",
+        s3Key: "pos/test.pdf",
+        isHumanApproved: false,
+        extractedData: {
+          confidence: 0.3
+        }
+      };
+
+      const decisionNotApproved = shouldContinueAfterExtraction(stateNotApproved);
+      expect(decisionNotApproved).toBe("exception");
+    });
+  });
 });

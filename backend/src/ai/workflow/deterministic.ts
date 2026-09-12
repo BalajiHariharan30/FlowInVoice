@@ -145,6 +145,35 @@ function applyUpdate(state: PipelineState, update: Partial<PipelineState>): Pipe
 }
 
 // ---------------------------------------------------------------------------
+// Routers
+// ---------------------------------------------------------------------------
+
+// Router 1: Extraction -> Matching or Exception
+export const shouldContinueAfterExtraction = (state: WorkflowState): "matching" | "exception" => {
+  // Human sign-off defense: a human already approved this PO. Do not
+  // re-evaluate extraction confidence — a fresh OCR pass on resume can
+  // legitimately come back with the same low confidence as the original
+  // pass (same document), which without this check sends an approved PO
+  // straight back into Exception with the original error, looping forever.
+  // Routers 2 and 3 already have this check; this one was missed.
+  // Downstream posting reads line items from the persisted PO record
+  // (already corrected by the reviewer), not from this extraction state,
+  // so bypassing here is safe even if this extraction pass came back weak.
+  if (state.isHumanApproved || state.skipValidation) {
+    return "matching";
+  }
+  if (
+    state.technicalError ||
+    !state.extractedData ||
+    (state.extractedData.confidence ?? 1.0) < 0.75
+  ) {
+    logger.info({ poId: state.poId }, "Router: Routing from Extraction to Exception");
+    return "exception";
+  }
+  return "matching";
+};
+
+// ---------------------------------------------------------------------------
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
@@ -364,11 +393,8 @@ export async function runDeterministicWorkflow(
 
       // ── Routing decisions (replaces conditional edges) ─────────────────────
       if (name === "extraction") {
-        const needsException =
-          !state.isHumanApproved &&
-          !state.skipValidation &&
-          (state.technicalError || !state.extractedData || (state.extractedData?.confidence ?? 1.0) < 0.75);
-        if (needsException) {
+        const next = shouldContinueAfterExtraction(state as any);
+        if (next === "exception") {
           logger.info({ poId }, "DeterministicOrchestrator: routing extraction → exception");
           state = applyUpdate(state, await createExceptionNode(tenantId)(state as any) as any);
           await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);

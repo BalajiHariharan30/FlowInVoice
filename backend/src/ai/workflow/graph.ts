@@ -5,3 +5,4 @@
  */
 
 export * from "./deterministic.js";
+export { shouldContinueAfterExtraction } from "./deterministic.js";
