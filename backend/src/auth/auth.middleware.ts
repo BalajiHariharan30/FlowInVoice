@@ -13,8 +13,15 @@ declare global {
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
+  let token: string | undefined;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (typeof req.query.token === "string" && req.query.token.trim().length > 0) {
+    token = req.query.token.trim();
+  }
+
+  if (!token) {
     res.status(401).json({
       code: "UNAUTHORIZED",
       message: "Missing or invalid authorization token",
@@ -23,8 +30,6 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     });
     return;
   }
-
-  const token = authHeader.split(" ")[1];
   try {
     const payload = AuthService.verifyAccessToken(token);
     req.user = {

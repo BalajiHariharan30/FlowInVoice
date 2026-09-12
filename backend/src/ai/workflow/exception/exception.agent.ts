@@ -8,6 +8,68 @@ import { ReviewStage, ReviewPriority } from "../../../types/index.js";
 import { logger } from "../../../utils/logger.js";
 
 /**
+ * Generates a structured diagnosis object when a PO accumulates >= 3 exceptions.
+ */
+export function generateDiagnosis(
+  reason: string,
+  errorCount: number,
+  allErrors: string[]
+): { failurePatternSummary: string; rootCauseCategory: string; recommendedAction: string } {
+  const lowerReason = (reason + " " + allErrors.join(" ")).toLowerCase();
+
+  let rootCauseCategory = "GENERAL_VALIDATION_ERROR";
+  let failurePatternSummary = `This purchase order has accumulated ${errorCount} exceptions during automated processing.`;
+  let recommendedAction = "Review document values and apply manual adjustments in Review Center.";
+
+  if (
+    lowerReason.includes("confidence") ||
+    lowerReason.includes("ocr") ||
+    lowerReason.includes("blurry") ||
+    lowerReason.includes("low_confidence")
+  ) {
+    rootCauseCategory = "EXTRACTION_CONFIDENCE";
+    failurePatternSummary = `This PO has failed optical character recognition ${errorCount} times due to low scan resolution or ambiguous text layout.`;
+    recommendedAction = "Re-scan the original purchase order at 300+ DPI or manually transcribe line items.";
+  } else if (
+    lowerReason.includes("math") ||
+    lowerReason.includes("mismatch") ||
+    lowerReason.includes("sum") ||
+    lowerReason.includes("tax")
+  ) {
+    rootCauseCategory = "MATH_MISMATCH";
+    failurePatternSummary = `Repeated arithmetic inconsistencies detected across ${errorCount} processing runs (line quantity * price does not reconcile with stated total/tax).`;
+    recommendedAction = "Manually correct line item quantities and unit prices in the Review Center table.";
+  } else if (lowerReason.includes("duplicate")) {
+    rootCauseCategory = "DUPLICATE_PO";
+    failurePatternSummary = `Duplicate PO number collision detected across ${errorCount} ingestion attempts.`;
+    recommendedAction = "Verify if this is a duplicate order or assign a unique suffix (e.g. -REV1) to allow ingestion.";
+  } else if (lowerReason.includes("currency")) {
+    rootCauseCategory = "CURRENCY_MISMATCH";
+    failurePatternSummary = `Multi-currency discrepancy: line items have divergent currencies compared to PO header.`;
+    recommendedAction = "Convert all line items to the uniform single currency before posting.";
+  } else if (
+    lowerReason.includes("sku") ||
+    lowerReason.includes("uncataloged") ||
+    lowerReason.includes("catalog")
+  ) {
+    rootCauseCategory = "UNCATALOGED_SKU";
+    failurePatternSummary = `Uncataloged item code not found in enterprise product catalog exceeding approval threshold.`;
+    recommendedAction = "Register the new SKU in the product catalog or approve as a custom one-time item.";
+  } else if (
+    lowerReason.includes("contract") ||
+    lowerReason.includes("price") ||
+    lowerReason.includes("variance") ||
+    lowerReason.includes("policy")
+  ) {
+    rootCauseCategory = "PRICE_VARIANCE_POLICY";
+    failurePatternSummary = `Pricing exceeds contracted terms or policy variance threshold (>10%) across ${errorCount} evaluation cycles.`;
+    recommendedAction = "Verify contract price schedule or obtain special finance approval.";
+  }
+
+  return { failurePatternSummary, rootCauseCategory, recommendedAction };
+}
+
+/**
  * Agent 6: Exception / Human Review Agent (100% Deterministic TypeScript)
  * Escalates business exceptions to the Review Center with structured evidence.
  */
@@ -36,6 +98,20 @@ export function createExceptionNode(tenantId: string) {
       reason.toLowerCase().includes("math mismatch");
     const priority: ReviewPriority = isCritical ? "CRITICAL" : "HIGH";
 
+    // Rule 4: Once a PO accumulates >= 3 errors/exceptions, generate a structured suggestedFix diagnosis
+    const previousReviews = await ReviewRepository.findByEntityId(tenantId, state.poId);
+    const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
+    const totalErrorCount = previousReviews.length + (po?.retryCount || 0) + (state.validationErrors?.length || 1);
+
+    let suggestedFix: any = undefined;
+    if (totalErrorCount >= 3 || previousReviews.length >= 2 || (po?.retryCount || 0) >= 2) {
+      suggestedFix = generateDiagnosis(reason, totalErrorCount, state.validationErrors || []);
+      logger.info(
+        { tenantId, poId: state.poId, rootCauseCategory: suggestedFix.rootCauseCategory },
+        "ExceptionAgent: Generated structured suggestedFix diagnosis for repeated exceptions"
+      );
+    }
+
     // Check if an open PENDING review ticket already exists to prevent duplicate review accumulation
     const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, state.poId);
     let reviewId: string;
@@ -63,7 +139,8 @@ export function createExceptionNode(tenantId: string) {
         priority,
         stage,
         actualValue: reason,
-        evidence: mergedEvidence
+        evidence: mergedEvidence,
+        ...(suggestedFix ? { suggestedFix } : {})
       });
       logger.info(
         { tenantId, poId: state.poId, reviewId, evidenceCount: mergedEvidence.length },
@@ -81,7 +158,8 @@ export function createExceptionNode(tenantId: string) {
         requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
         expectedValue: "Within Contract/Policy Limits",
         actualValue: reason,
-        evidence: state.evidence || []
+        evidence: state.evidence || [],
+        ...(suggestedFix ? { suggestedFix } : {})
       });
       reviewId = review._id.toString();
       logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Created new review ticket");

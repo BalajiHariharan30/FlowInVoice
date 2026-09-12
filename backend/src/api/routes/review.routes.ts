@@ -8,10 +8,10 @@ import {
   AuditRepository,
   reconcileTaxFromLineItems
 } from "../../repositories/index.js";
-import { POProcessingWorkflow } from "../../agents/workflow.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
 import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
 import { ReanalysisService } from "../../ai/workflow/reanalysis.service.js";
+import { MoneyUtil } from "../../utils/money.js";
 import { logger } from "../../utils/logger.js";
 
 export const reviewRouter = Router();
@@ -114,7 +114,23 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  if (review.status !== "PENDING") {
+  // Rule 5: Segregation of duties (Maker-Checker check)
+  const currentUserId = req.user!.id || (req.user as any).userId;
+  const currentUserEmail = req.user!.email;
+  if (review.entity === "purchase_order") {
+    const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
+    if (po && po.createdBy && (po.createdBy === currentUserId || po.createdBy === currentUserEmail)) {
+      res.status(403).json({
+        code: "MAKER_CHECKER_VIOLATION",
+        message: "Users cannot review documents they submitted",
+        details: { createdBy: po.createdBy, reviewer: currentUserId },
+        requestId: req.requestId || ""
+      });
+      return;
+    }
+  }
+
+  if (review.status !== "PENDING" && review.status !== "ESCALATED") {
     res.status(400).json({
       code: "ALREADY_RESOLVED",
       message: `Review is already resolved with status ${review.status}`,
@@ -140,10 +156,46 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     req.user!.email
   );
 
-  // Close any duplicate pending tickets for this entity
+  // Close duplicate pending tickets sharing the same dedupKey
   await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
 
-  // Resume workflow at the appropriate stage
+  // Rule 2: Multi-exception all-approval check
+  const allReviews = await ReviewRepository.findByEntityId(tenantId, review.entityId);
+  const openReviews = allReviews.filter(
+    (r) => (r.status === "PENDING" || r.status === "ESCALATED") && r._id.toString() !== review._id.toString()
+  );
+
+  if (openReviews.length > 0) {
+    logger.info(
+      { tenantId, entityId: review.entityId, remainingCount: openReviews.length },
+      "Review item approved, but other pending reviews remain. PO remains in HUMAN_REVIEW."
+    );
+
+    await AuditRepository.create(tenantId, {
+      agentName: "HumanReviewCenter",
+      action: "REVIEW_APPROVED",
+      status: "SUCCESS",
+      entityId: review.entityId,
+      workflowId: "manual_review",
+      summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. ${openReviews.length} open review item(s) remain before pipeline resumes.`
+    });
+
+    res.status(200).json({
+      id: resolved!._id.toString(),
+      entity: resolved!.entity,
+      entityId: resolved!.entityId,
+      stage: resolved!.stage,
+      status: resolved!.status,
+      resolutionNotes: resolved!.resolutionNotes,
+      resolvedBy: resolved!.resolvedBy,
+      resolvedAt: resolved!.resolvedAt,
+      remainingOpenReviewsCount: openReviews.length,
+      message: `Review approved. Awaiting resolution of ${openReviews.length} remaining review item(s) before workflow resumes.`
+    });
+    return;
+  }
+
+  // Rule 3: All review items approved -> Resume workflow at the posting stage checkpoint
   if (review.stage === "extraction" || review.stage === "validation") {
     if (review.entity === "purchase_order") {
       const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
@@ -155,21 +207,23 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
       // If no explicit human corrections provided, auto-reconcile OCR tax-inclusive line totals
       if (!hasExplicitCorrections) {
         activeLineItems = activeLineItems.map((li: any) => {
-          const qty = Number(li.quantity) || 1;
-          const price = Number(li.unitPrice) || 0;
-          const canonicalLineTotal = Number((qty * price).toFixed(2));
-          if (canonicalLineTotal > 0 && Math.abs((Number(li.lineTotal) || 0) - canonicalLineTotal) > 0.01) {
-            return { ...li, lineTotal: canonicalLineTotal };
+          const qty = li.quantity ?? 1;
+          const price = li.unitPrice ?? 0;
+          const canonicalLineTotal = MoneyUtil.multiply(qty, price).toDecimalPlaces(2);
+          const currentTotal = MoneyUtil.from(li.lineTotal ?? 0);
+          if (canonicalLineTotal.greaterThan(0) && !MoneyUtil.equals(currentTotal, canonicalLineTotal, 0.01)) {
+            return { ...li, lineTotal: MoneyUtil.toNumber(canonicalLineTotal) };
           }
           return li;
         });
       }
 
       const reconciledTax = reconcileTaxFromLineItems(activeLineItems);
-      const subtotal = Number(activeLineItems.reduce((acc: number, li: any) => acc + (li.lineTotal || 0), 0).toFixed(2));
+      const subtotalDecimal = MoneyUtil.sum(activeLineItems.map((li: any) => li.lineTotal ?? 0)).toDecimalPlaces(2);
+      const subtotal = MoneyUtil.toNumber(subtotalDecimal);
       const effectiveTax = reconciledTax !== null ? reconciledTax : (po?.tax || 0);
       const discount = po?.discount || 0;
-      const totalAmount = Number((subtotal + effectiveTax - discount).toFixed(2));
+      const totalAmount = MoneyUtil.toNumber(MoneyUtil.calculateTotal(subtotal, effectiveTax, discount).toDecimalPlaces(2));
 
       await PurchaseOrderRepository.updateExtraction(tenantId, review.entityId, {
         lineItems: activeLineItems,
@@ -186,16 +240,14 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
       });
     }
 
-    // Resume via LangGraph Orchestration Workflow asynchronously.
-    // No legacy fallback: the legacy engine has no isHumanApproved awareness
-    // and would re-enter the review pipeline for an already-resolved PO.
+    // Resume via LangGraph Orchestration Workflow asynchronously directly from checkpoint
     setImmediate(async () => {
       try {
         await runOrchestrationWorkflow(tenantId, review.entityId);
       } catch (err: any) {
         logger.error(
           { err, tenantId, poId: review.entityId },
-          "LangGraph workflow failed upon review approval; no legacy fallback for approved POs"
+          "LangGraph workflow failed upon review approval"
         );
       }
     });
@@ -217,7 +269,7 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     status: "SUCCESS",
     entityId: review.entityId,
     workflowId: "manual_review",
-    summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. Notes: ${resolutionNotes || "None"}`
+    summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. All exceptions resolved; workflow resumed.`
   });
 
   res.status(200).json({
@@ -259,7 +311,23 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     return;
   }
 
-  if (review.status !== "PENDING") {
+  // Rule 5: Segregation of duties (Maker-Checker check)
+  const currentUserId = req.user!.id || (req.user as any).userId;
+  const currentUserEmail = req.user!.email;
+  if (review.entity === "purchase_order") {
+    const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
+    if (po && po.createdBy && (po.createdBy === currentUserId || po.createdBy === currentUserEmail)) {
+      res.status(403).json({
+        code: "MAKER_CHECKER_VIOLATION",
+        message: "Users cannot review documents they submitted",
+        details: { createdBy: po.createdBy, reviewer: currentUserId },
+        requestId: req.requestId || ""
+      });
+      return;
+    }
+  }
+
+  if (review.status !== "PENDING" && review.status !== "ESCALATED") {
     res.status(400).json({
       code: "ALREADY_RESOLVED",
       message: `Review is already resolved with status ${review.status}`,
@@ -269,7 +337,7 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     return;
   }
 
-  // BUG 1 FIX: If reviewing a Purchase Order, run comprehensive re-analysis across Nodes 02–06
+  // Rule 1 & Rule 2: Rejection with Re-analysis and Cascading Rejection
   if (review.entity === "purchase_order") {
     const reanalysis = await ReanalysisService.reanalyzePurchaseOrder(tenantId, review.entityId);
 
@@ -323,8 +391,12 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
       }
     );
 
-    // Close any duplicate pending tickets for this entity
-    await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString(), "REJECTED");
+    // Cascade rejection to all open reviews for this entity
+    await ReviewRepository.rejectOpenReviewsForEntity(
+      tenantId,
+      review.entityId,
+      `Cascaded rejection from exception ${review._id.toString()}: ${reason}`
+    );
 
     // Mark PO REJECTED with summary reasons
     const summaryReasons = reanalysis.discrepancies
@@ -383,8 +455,12 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     { rejectionReason: reason }
   );
 
-  // Close any duplicate pending tickets for this entity
-  await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString(), "REJECTED");
+  // Cascade rejection to all open reviews for this entity
+  await ReviewRepository.rejectOpenReviewsForEntity(
+    tenantId,
+    review.entityId,
+    `Cascaded rejection from exception ${review._id.toString()}: ${reason}`
+  );
 
   if (review.stage === "invoice") {
     await InvoiceRepository.updateStatus(tenantId, review.entityId, "REJECTED");
@@ -393,7 +469,7 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
       await PurchaseOrderRepository.updateStatus(
         tenantId,
         inv.poId,
-        "FAILED",
+        "REJECTED",
         `Invoice rejected: ${reason}`
       );
     }
@@ -419,6 +495,20 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     resolvedAt: resolved!.resolvedAt
   });
 }
+
+/**
+ * POST /reviews/escalate-stale
+ * Triggers SLA escalation for review tickets exceeding the SLA threshold (default 24h)
+ */
+reviewRouter.post("/escalate-stale", async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.user!.tenantId;
+  const thresholdHours = req.body?.thresholdHours ? Number(req.body.thresholdHours) : 24;
+  const result = await ReviewRepository.escalateStaleReviews(tenantId, thresholdHours);
+  res.status(200).json({
+    success: true,
+    ...result
+  });
+});
 
 /**
  * POST /reviews/:reviewId/approve

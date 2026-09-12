@@ -71,11 +71,13 @@ export class AgentTools {
   }
 
   static calculateVariance(actual: number, expected: number) {
-    const diff = Math.abs(actual - expected);
-    const variancePercent = expected > 0 ? (diff / expected) * 100 : 0;
+    const act = MoneyUtil.from(actual);
+    const exp = MoneyUtil.from(expected);
+    const diff = act.minus(exp).abs();
+    const variancePercent = exp.gt(0) ? diff.dividedBy(exp).times(100) : MoneyUtil.from(0);
     return {
-      difference: diff,
-      variancePercentage: MoneyUtil.toNumber(MoneyUtil.format(variancePercent, 2)),
+      difference: MoneyUtil.toNumber(diff.toDecimalPlaces(2)),
+      variancePercentage: MoneyUtil.toNumber(variancePercent.toDecimalPlaces(2)),
       isMatch: MoneyUtil.equals(actual, expected)
     };
   }

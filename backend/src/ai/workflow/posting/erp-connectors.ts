@@ -160,3 +160,10 @@ export class MockErpClient {
     return connector.postInvoice(tenantId, invoiceData);
   }
 }
+
+/** Resolves the ERP connector for the given tenant, defaulting to Sandbox/Mock. */
+export async function getTenantErpConnector(tenantId?: string): Promise<ErpConnector> {
+  const provider = process.env.ERP_PROVIDER || (process.env.NODE_ENV === "test" ? "mock" : "sandbox");
+  return ErpConnectorFactory.getConnector(provider);
+}
+

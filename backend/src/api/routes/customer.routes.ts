@@ -22,23 +22,29 @@ customerRouter.get("/", async (req: Request, res: Response): Promise<void> => {
     search: search as string
   });
 
-  const formattedData = await Promise.all(
-    result.data.map(async (cust) => {
-      const contracts = await ContractRepository.findByCustomerId(tenantId, cust._id.toString());
-      return {
-        id: cust._id.toString(),
-        name: cust.name,
-        code: cust.code,
-        email: cust.email,
-        gstNumber: cust.gstNumber,
-        paymentTerms: cust.paymentTerms,
-        currency: cust.currency,
-        contractCount: contracts.length,
-        createdAt: cust.createdAt,
-        updatedAt: cust.updatedAt
-      };
-    })
-  );
+  const customerIds = result.data.map((c) => c._id.toString());
+  const allContracts = await ContractRepository.findByCustomerIds(tenantId, customerIds);
+  const contractCountByCustomer = new Map<string, number>();
+  for (const c of allContracts) {
+    const custId = c.customerId.toString();
+    contractCountByCustomer.set(custId, (contractCountByCustomer.get(custId) || 0) + 1);
+  }
+
+  const formattedData = result.data.map((cust) => {
+    const custId = cust._id.toString();
+    return {
+      id: custId,
+      name: cust.name,
+      code: cust.code,
+      email: cust.email,
+      gstNumber: cust.gstNumber,
+      paymentTerms: cust.paymentTerms,
+      currency: cust.currency,
+      contractCount: contractCountByCustomer.get(custId) || 0,
+      createdAt: cust.createdAt,
+      updatedAt: cust.updatedAt
+    };
+  });
 
   res.status(200).json({
     data: formattedData,
@@ -101,6 +107,17 @@ customerRouter.post("/:customerId/contracts", async (req: Request, res: Response
   const tenantId = req.user!.tenantId;
   const customerId = req.params.customerId as string;
   const { contractNumber, contractType, effectiveFrom, effectiveTo, rawContent, totalValue } = req.body;
+
+  const customer = await CustomerRepository.findById(tenantId, customerId);
+  if (!customer) {
+    res.status(404).json({
+      code: "NOT_FOUND",
+      message: "Customer not found for this tenant",
+      details: { customerId },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
 
   if (!contractNumber || !effectiveFrom || !effectiveTo) {
     res.status(400).json({

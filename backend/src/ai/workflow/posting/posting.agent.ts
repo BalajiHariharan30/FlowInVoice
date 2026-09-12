@@ -6,13 +6,13 @@ import {
   InvoiceRepository,
   AuditRepository
 } from "../../../repositories/index.js";
-import { MockErpClient } from "./erp-connectors.js";
+import { MockErpClient, getTenantErpConnector } from "./erp-connectors.js";
 import PDFDocument from "pdfkit";
 import { logger } from "../../../utils/logger.js";
 
 // Re-export connector types so consumers only need one import path
 export type { ErpConnector, ErpInvoicePayload, MockErpVoucher } from "./erp-connectors.js";
-export { MockErpConnector, NetSuiteErpConnector, SapS4HanaConnector, ErpConnectorFactory, MockErpClient } from "./erp-connectors.js";
+export { MockErpConnector, NetSuiteErpConnector, SapS4HanaConnector, ErpConnectorFactory, MockErpClient, getTenantErpConnector } from "./erp-connectors.js";
 
 /**
  * Agent 7: Posting / ERP Agent (100% Deterministic TypeScript)
@@ -34,10 +34,55 @@ export function createPostingNode(tenantId: string) {
       throw new Error(`PO not found for posting: ${state.poId}`);
     }
 
+    // 0. Arithmetic Invariance Guard: Strictly validate qty * unitPrice == lineTotal
+    const mathErrors: string[] = [];
+    if (po.lineItems && po.lineItems.length > 0) {
+      for (const item of po.lineItems) {
+        if (item.quantity !== undefined && item.unitPrice !== undefined && item.lineTotal !== undefined) {
+          const expectedLineTotal = MoneyUtil.multiply(item.quantity, item.unitPrice);
+          const actualLineTotal = MoneyUtil.from(item.lineTotal);
+          if (!MoneyUtil.equals(expectedLineTotal, actualLineTotal)) {
+            mathErrors.push(
+              `Line ${item.lineNumber || 1} math mismatch: ${item.quantity} * ${item.unitPrice} != ${item.lineTotal}`
+            );
+          }
+        }
+      }
+    }
+
+    if (mathErrors.length > 0) {
+      logger.error(
+        { tenantId, poId: state.poId, mathErrors },
+        "PostingAgent: Arithmetic invariant check failed. Halting posting and routing to human review."
+      );
+      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, state.poId, "HUMAN_REVIEW", {
+        failureReason: mathErrors.join("; ")
+      });
+      return {
+        status: "HUMAN_REVIEW",
+        isBusinessException: true,
+        validationErrors: mathErrors,
+        currentStep: "human_review"
+      };
+    }
+
     await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "INVOICE_GENERATING");
 
-    // 1. Establish Invoice Identification
+    // 1. Establish Invoice Identification & Check for Existing Issued Invoice
     let invoice = await InvoiceRepository.findByPoId(tenantId, state.poId);
+    if (invoice && invoice.status === "ISSUED") {
+      logger.warn(
+        { tenantId, poId: state.poId, invoiceNumber: invoice.invoiceNumber },
+        "PostingAgent: Invoice already exists and is ISSUED for this PO. Aborting duplicate creation."
+      );
+      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "COMPLETED");
+      return {
+        invoiceId: invoice._id.toString(),
+        invoiceNumber: invoice.invoiceNumber,
+        status: "COMPLETED",
+        currentStep: "completed"
+      };
+    }
     const invoiceNumber = invoice?.invoiceNumber || `INV-${po.poNumber.replace(/^PO-/, "")}`;
 
     // 2. Compute Canonical Decimal Totals
@@ -127,7 +172,8 @@ export function createPostingNode(tenantId: string) {
     const invoiceId = invoice._id.toString();
 
     // 6. Post to ERP
-    const erpVoucher = await MockErpClient.postInvoice(tenantId, {
+    const connector = await getTenantErpConnector(tenantId);
+    const erpVoucher = await connector.postInvoice(tenantId, {
       invoiceNumber,
       poNumber: po.poNumber,
       totalAmount: MoneyUtil.toNumber(totalAmount),
@@ -149,7 +195,7 @@ export function createPostingNode(tenantId: string) {
       entityId: invoiceId,
       workflowId: state.workflowId,
       latency,
-      summary: `Invoice ${invoiceNumber} issued ($${totalAmount.toFixed(2)}) and posted to ERP (voucher: ${erpVoucher.voucherNumber})`
+      summary: `Invoice ${invoiceNumber} issued (${headerCurrency} ${totalAmount.toFixed(2)}) and posted to ERP (voucher: ${erpVoucher.voucherNumber})`
     });
 
     return {
@@ -219,20 +265,21 @@ function generateInvoicePdfBuffer(data: PdfInvoiceData): Promise<Buffer> {
     doc.moveDown();
     doc.font("Helvetica");
 
+    const curr = data.currency || "INR";
+
     // Line items
     for (const item of data.lineItems) {
       const y = doc.y;
       doc.text(`${item.productCode} - ${item.description}`, 50, y, { width: 240 });
       doc.text(String(item.quantity), 300, y, { width: 50, align: "right" });
-      doc.text(`$${Number(item.unitPrice).toFixed(2)}`, 360, y, { width: 80, align: "right" });
-      doc.text(`$${Number(item.lineTotal).toFixed(2)}`, 450, y, { width: 90, align: "right" });
+      doc.text(`${curr} ${Number(item.unitPrice).toFixed(2)}`, 360, y, { width: 80, align: "right" });
+      doc.text(`${curr} ${Number(item.lineTotal).toFixed(2)}`, 450, y, { width: 90, align: "right" });
       doc.moveDown();
     }
 
     // Totals
     doc.moveDown();
     doc.font("Helvetica-Bold");
-    const curr = data.currency === "USD" ? "INR" : (data.currency || "INR");
     doc.text(`Subtotal: ${curr} ${Number(data.subtotal).toFixed(2)}`, { align: "right" });
     doc.text(`Tax: ${curr} ${Number(data.tax).toFixed(2)}`, { align: "right" });
     doc.fontSize(14).text(`Total Amount: ${curr} ${Number(data.total).toFixed(2)}`, { align: "right" });

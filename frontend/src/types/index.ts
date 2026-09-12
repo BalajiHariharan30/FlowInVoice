@@ -13,7 +13,8 @@ export type POStatus =
   | "INVOICE_GENERATING"
   | "INVOICE_VALIDATING"
   | "COMPLETED"
-  | "FAILED";
+  | "FAILED"
+  | "DELETED";
 
 export type InvoiceStatus =
   | "DRAFT"
@@ -25,8 +26,14 @@ export type InvoiceStatus =
   | "CANCELLED";
 
 export type ReviewStage = "extraction" | "validation" | "invoice";
-export type ReviewStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type ReviewStatus = "PENDING" | "APPROVED" | "REJECTED" | "ESCALATED";
 export type ReviewPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export interface SuggestedFix {
+  failurePatternSummary: string;
+  rootCauseCategory: string;
+  recommendedAction: string;
+}
 
 export interface EvidenceItem {
   sourceType: "CONTRACT" | "POLICY";
@@ -97,7 +104,11 @@ export interface PurchaseOrder {
   lineItems: POLineItem[];
   retryCount: number;
   failureReason?: string;
+  terminationReason?: string;
   workflowId?: string;
+  createdBy?: string;
+  previousVersionId?: string;
+  version?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -160,6 +171,7 @@ export interface HumanReview {
   actualValue?: string;
   evidence: EvidenceItem[];
   discrepancyReport?: DiscrepancyItem[];
+  suggestedFix?: SuggestedFix;
   assignedTo?: string;
   resolutionNotes?: string;
   resolvedBy?: string;

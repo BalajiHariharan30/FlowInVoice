@@ -173,6 +173,10 @@ export const WorkflowStateAnnotation = Annotation.Root({
   skipValidation: Annotation<boolean>({
     reducer: (curr, update) => curr || update,
     default: () => false
+  }),
+  resumedFromStep: Annotation<string | undefined>({
+    reducer: (_, update) => update,
+    default: () => undefined
   })
 });
 

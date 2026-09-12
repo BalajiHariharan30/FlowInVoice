@@ -1,0 +1,560 @@
+[
+  {
+    "id": "fixture_01_clean_hardware",
+    "fileName": "PO-CLEAN-001-hardware.pdf",
+    "category": "clean_digital",
+    "description": "Clean, well-formatted digital PDF with 2 standard hardware items and 18% GST",
+    "expected": {
+      "poNumber": "PO-2026-CLEAN-001",
+      "customerName": "Acme Global Technologies",
+      "gstNumber": "27AABCU9603R1ZM",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 150000.00,
+      "tax": 27000.00,
+      "discount": 0.00,
+      "totalAmount": 177000.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "HW-SRV-01",
+          "description": "Enterprise Rack Server Dual Xeon",
+          "quantity": 2,
+          "unitPrice": 60000.00,
+          "lineTotal": 120000.00,
+          "taxRate": 18
+        },
+        {
+          "lineNumber": 2,
+          "productCode": "HW-RAM-64",
+          "description": "64GB DDR5 ECC Server Memory Module",
+          "quantity": 3,
+          "unitPrice": 10000.00,
+          "lineTotal": 30000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "AUTO_APPROVE",
+    "expectedConfidenceMin": 0.90,
+    "shouldFlagHumanReview": false
+  },
+  {
+    "id": "fixture_02_clean_saas",
+    "fileName": "PO-CLEAN-002-saas-sub.pdf",
+    "category": "clean_digital",
+    "description": "Clean digital single-item software annual subscription in USD",
+    "expected": {
+      "poNumber": "PO-2026-SaaS-002",
+      "customerName": "CloudScale Systems Inc",
+      "gstNumber": "29AABCS1429B1ZB",
+      "currency": "USD",
+      "paymentTerms": "NET_30",
+      "subtotal": 12000.00,
+      "tax": 0.00,
+      "discount": 0.00,
+      "totalAmount": 12000.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "SW-ANN-ENT",
+          "description": "FlowInVoice Enterprise SaaS Subscription - 12 Months",
+          "quantity": 1,
+          "unitPrice": 12000.00,
+          "lineTotal": 12000.00,
+          "taxRate": 0
+        }
+      ]
+    },
+    "expectedOutcome": "AUTO_APPROVE",
+    "expectedConfidenceMin": 0.95,
+    "shouldFlagHumanReview": false
+  },
+  {
+    "id": "fixture_03_clean_consulting",
+    "fileName": "PO-CLEAN-003-consulting.pdf",
+    "category": "clean_digital",
+    "description": "Clean digital multi-item professional services PO with 18% tax and 5% volume discount",
+    "expected": {
+      "poNumber": "PO-2026-CON-003",
+      "customerName": "Zenith Financial Services",
+      "gstNumber": "33AABCT3421C1ZC",
+      "currency": "INR",
+      "paymentTerms": "NET_45",
+      "subtotal": 400000.00,
+      "tax": 72000.00,
+      "discount": 20000.00,
+      "totalAmount": 452000.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "SRV-ARCH",
+          "description": "Principal Cloud Solution Architecture (Days)",
+          "quantity": 10,
+          "unitPrice": 25000.00,
+          "lineTotal": 250000.00,
+          "taxRate": 18
+        },
+        {
+          "lineNumber": 2,
+          "productCode": "SRV-DEV",
+          "description": "Senior Fullstack Integration Engineering (Days)",
+          "quantity": 10,
+          "unitPrice": 15000.00,
+          "lineTotal": 150000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "AUTO_APPROVE",
+    "expectedConfidenceMin": 0.92,
+    "shouldFlagHumanReview": false
+  },
+  {
+    "id": "fixture_04_scanned_skew",
+    "fileName": "PO-SCANNED-004-skewed.pdf",
+    "category": "scanned_low_quality",
+    "description": "Scanned paper invoice with rotational skew (12 deg) and slight background noise",
+    "expected": {
+      "poNumber": "PO-SCAN-SKEW-004",
+      "customerName": "Apex Manufacturing Ltd",
+      "gstNumber": "06AABCA1234F1Z1",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 85000.00,
+      "tax": 15300.00,
+      "discount": 0.00,
+      "totalAmount": 100300.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "IND-VALVE-01",
+          "description": "Hydraulic Control Valve 2-Inch",
+          "quantity": 5,
+          "unitPrice": 17000.00,
+          "lineTotal": 85000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.74,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_05_scanned_lowres",
+    "fileName": "PO-SCANNED-005-lowres-fax.pdf",
+    "category": "scanned_low_quality",
+    "description": "Low resolution 72 DPI monochrome fax scan with noisy characters",
+    "expected": {
+      "poNumber": "PO-FAX-72DPI-005",
+      "customerName": "Pioneer Freight Carriers",
+      "gstNumber": "07AABCP5678H1Z5",
+      "currency": "INR",
+      "paymentTerms": "NET_15",
+      "subtotal": 32000.00,
+      "tax": 5760.00,
+      "discount": 0.00,
+      "totalAmount": 37760.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "LOG-TRANS-01",
+          "description": "Interstate Container Freight Transit",
+          "quantity": 1,
+          "unitPrice": 32000.00,
+          "lineTotal": 32000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.65,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_06_scanned_shadow",
+    "fileName": "PO-SCANNED-006-mobile-shadow.pdf",
+    "category": "scanned_low_quality",
+    "description": "Mobile camera photo taken under uneven lighting with dark shadow across total table",
+    "expected": {
+      "poNumber": "PO-MOB-PHOTO-006",
+      "customerName": "Vanguard Retailers",
+      "gstNumber": "19AABCV9988K1ZQ",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 54000.00,
+      "tax": 9720.00,
+      "discount": 0.00,
+      "totalAmount": 63720.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "POS-TERM-02",
+          "description": "Smart Card Payment Terminal",
+          "quantity": 3,
+          "unitPrice": 18000.00,
+          "lineTotal": 54000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.70,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_07_handwritten_stamp",
+    "fileName": "PO-HANDWRITTEN-007-cfo-stamp.pdf",
+    "category": "handwritten_annotated",
+    "description": "Official PO stamped with physical 'APPROVED BY FINANCE' seal and handwritten PO date",
+    "expected": {
+      "poNumber": "PO-STAMP-CFO-007",
+      "customerName": "Metro Infra Projects",
+      "gstNumber": "24AABCM3322L1Z9",
+      "currency": "INR",
+      "paymentTerms": "NET_60",
+      "subtotal": 210000.00,
+      "tax": 37800.00,
+      "discount": 0.00,
+      "totalAmount": 247800.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "INFRA-STEEL-01",
+          "description": "Structural Steel Beams Grade 50",
+          "quantity": 3,
+          "unitPrice": 70000.00,
+          "lineTotal": 210000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.75,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_08_handwritten_strikethrough",
+    "fileName": "PO-HANDWRITTEN-008-strikethrough-qty.pdf",
+    "category": "handwritten_annotated",
+    "description": "PO with pen strikethrough changing quantity from 10 to 8 with handwritten initials",
+    "expected": {
+      "poNumber": "PO-STRIKE-QTY-008",
+      "customerName": "Orion Electronics",
+      "gstNumber": "36AABCO4411P1Z8",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 80000.00,
+      "tax": 14400.00,
+      "discount": 0.00,
+      "totalAmount": 94400.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "ELEC-CIRCUIT-04",
+          "description": "PCB Logic Controller (Corrected to 8 units)",
+          "quantity": 8,
+          "unitPrice": 10000.00,
+          "lineTotal": 80000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.68,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_09_multicurrency_usd_eur",
+    "fileName": "PO-MULTICURR-009-usd-eur-mix.pdf",
+    "category": "multi_currency",
+    "description": "Purchase order with USD currency header but line item priced in EUR",
+    "expected": {
+      "poNumber": "PO-CURR-MIX-009",
+      "customerName": "Global Trade Logistics Inc",
+      "gstNumber": "",
+      "currency": "USD",
+      "paymentTerms": "NET_30",
+      "subtotal": 5000.00,
+      "tax": 0.00,
+      "discount": 0.00,
+      "totalAmount": 5000.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "LOG-EUR-ITEM",
+          "description": "European Regional Distribution",
+          "quantity": 2,
+          "unitPrice": 2500.00,
+          "lineTotal": 5000.00,
+          "currency": "EUR"
+        }
+      ]
+    },
+    "expectedOutcome": "EXCEPTION_CURRENCY_MISMATCH",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_10_multicurrency_inr_usd",
+    "fileName": "PO-MULTICURR-010-inr-usd-mix.pdf",
+    "category": "multi_currency",
+    "description": "Purchase order with INR currency header but imported license line item priced in USD",
+    "expected": {
+      "poNumber": "PO-CURR-MIX-010",
+      "customerName": "Bharat Tech Solutions",
+      "gstNumber": "27AABCB1122D1ZM",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 85000.00,
+      "tax": 0.00,
+      "discount": 0.00,
+      "totalAmount": 85000.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "SW-INTL-LIC",
+          "description": "International Developer SDK Seat",
+          "quantity": 1,
+          "unitPrice": 1000.00,
+          "lineTotal": 1000.00,
+          "currency": "USD"
+        }
+      ]
+    },
+    "expectedOutcome": "EXCEPTION_CURRENCY_MISMATCH",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_11_ambiguous_borderless_table",
+    "fileName": "PO-AMBIGUOUS-011-borderless-table.pdf",
+    "category": "ocr_hostile_formatting",
+    "description": "Multi-column borderless table with wrapped descriptions spanning 4 rows per item",
+    "expected": {
+      "poNumber": "PO-TABLE-WRAP-011",
+      "customerName": "Delta Aerospace Systems",
+      "gstNumber": "29AABCD9911E1Z0",
+      "currency": "INR",
+      "paymentTerms": "NET_45",
+      "subtotal": 190000.00,
+      "tax": 34200.00,
+      "discount": 0.00,
+      "totalAmount": 224200.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "AERO-PART-99",
+          "description": "Precision Machined Titanium Fastener Assembly per spec MIL-STD-810H with batch test certification",
+          "quantity": 100,
+          "unitPrice": 1900.00,
+          "lineTotal": 190000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.74,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_12_ambiguous_condensed_font",
+    "fileName": "PO-AMBIGUOUS-012-condensed-font.pdf",
+    "category": "ocr_hostile_formatting",
+    "description": "Heavily condensed sans font with zero vs letter O ambiguity (PO-00OO01)",
+    "expected": {
+      "poNumber": "PO-00OO01-COND",
+      "customerName": "Nexus Optical Networks",
+      "gstNumber": "33AABCN5566T1Z2",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 60000.00,
+      "tax": 10800.00,
+      "discount": 0.00,
+      "totalAmount": 70800.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "OPT-FIB-100",
+          "description": "Single-mode Armored Fiber 100M",
+          "quantity": 6,
+          "unitPrice": 10000.00,
+          "lineTotal": 60000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "expectedConfidenceMax": 0.72,
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_13_missing_po_number",
+    "fileName": "PO-MISSING-013-no-ponumber.pdf",
+    "category": "missing_required_fields",
+    "description": "Document missing purchase order reference identifier in header",
+    "expected": {
+      "poNumber": "PENDING-EXTRACTION",
+      "customerName": "Horizon Health Supplies",
+      "gstNumber": "27AABCH7766J1ZM",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 45000.00,
+      "tax": 8100.00,
+      "discount": 0.00,
+      "totalAmount": 53100.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "MED-KIT-01",
+          "description": "Sterile Surgical Dressing Kits",
+          "quantity": 15,
+          "unitPrice": 3000.00,
+          "lineTotal": 45000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_14_missing_line_items",
+    "fileName": "PO-MISSING-014-no-lineitems.pdf",
+    "category": "missing_required_fields",
+    "description": "Cover sheet without itemized pricing table",
+    "expected": {
+      "poNumber": "PO-NO-LINES-014",
+      "customerName": "Summit Construction",
+      "gstNumber": "29AABCS8899K1Z4",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 0.00,
+      "tax": 0.00,
+      "discount": 0.00,
+      "totalAmount": 100000.00,
+      "lineItems": []
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_15_missing_total",
+    "fileName": "PO-MISSING-015-no-total.pdf",
+    "category": "missing_required_fields",
+    "description": "PO with line items present but cut off before summary / grand total footer",
+    "expected": {
+      "poNumber": "PO-NO-TOTAL-015",
+      "customerName": "Solaris Energy Corp",
+      "gstNumber": "08AABCS4455L1Z1",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 75000.00,
+      "tax": 13500.00,
+      "discount": 0.00,
+      "totalAmount": 0.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "SOL-PANEL-350W",
+          "description": "Monocrystalline Solar Panel 350W",
+          "quantity": 10,
+          "unitPrice": 7500.00,
+          "lineTotal": 75000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_16_math_line_mismatch",
+    "fileName": "PO-MATH-016-line-product-error.pdf",
+    "category": "intentional_math_error",
+    "description": "Arithmetic corruption in line item math: 10 units @ 100.00 states lineTotal of 9999.00",
+    "expected": {
+      "poNumber": "PO-MATH-LINE-016",
+      "customerName": "Matrix Logic Corp",
+      "gstNumber": "27AABCM6677N1ZR",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 9999.00,
+      "tax": 1799.82,
+      "discount": 0.00,
+      "totalAmount": 11798.82,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "MATH-ERR-SKU",
+          "description": "Corrupted Math Line Item",
+          "quantity": 10,
+          "unitPrice": 100.00,
+          "lineTotal": 9999.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW_MATH_INVALID",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_17_math_subtotal_mismatch",
+    "fileName": "PO-MATH-017-subtotal-sum-error.pdf",
+    "category": "intentional_math_error",
+    "description": "Subtotal mismatch: line items sum to 1000.00, but stated subtotal is 1500.00",
+    "expected": {
+      "poNumber": "PO-MATH-SUB-017",
+      "customerName": "Vector Analytics Ltd",
+      "gstNumber": "29AABCV1289G1Z7",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 1500.00,
+      "tax": 270.00,
+      "discount": 0.00,
+      "totalAmount": 1770.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "VEC-ITEM-01",
+          "description": "Vector Software License",
+          "quantity": 1,
+          "unitPrice": 1000.00,
+          "lineTotal": 1000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW_MATH_INVALID",
+    "shouldFlagHumanReview": true
+  },
+  {
+    "id": "fixture_18_math_tax_total_mismatch",
+    "fileName": "PO-MATH-018-grand-total-error.pdf",
+    "category": "intentional_math_error",
+    "description": "Grand total calculation corruption: subtotal 1000 + tax 180 states grand total 1350 instead of 1180",
+    "expected": {
+      "poNumber": "PO-MATH-TOT-018",
+      "customerName": "Omni Global Imports",
+      "gstNumber": "33AABCO3399Q1ZW",
+      "currency": "INR",
+      "paymentTerms": "NET_30",
+      "subtotal": 1000.00,
+      "tax": 180.00,
+      "discount": 0.00,
+      "totalAmount": 1350.00,
+      "lineItems": [
+        {
+          "lineNumber": 1,
+          "productCode": "OMNI-PART-01",
+          "description": "Omni Connector Widget",
+          "quantity": 1,
+          "unitPrice": 1000.00,
+          "lineTotal": 1000.00,
+          "taxRate": 18
+        }
+      ]
+    },
+    "expectedOutcome": "HUMAN_REVIEW_MATH_INVALID",
+    "shouldFlagHumanReview": true
+  }
+]

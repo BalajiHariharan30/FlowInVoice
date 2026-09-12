@@ -8,6 +8,7 @@ import { StageBadge } from "../../components/ui/StageBadge";
 import { LoadingSkeleton, ErrorBanner } from "../../components/feedback";
 import { PDFDocumentViewer } from "../../components/document/PDFDocumentViewer";
 import { useToast } from "../../contexts/ToastContext";
+import { useAuth } from "../../contexts/AuthContext";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -23,7 +24,9 @@ import {
   ArrowRight,
   Info,
   Clock,
-  History
+  History,
+  ShieldAlert,
+  Lightbulb
 } from "lucide-react";
 
 export const ReviewDetailsPage: React.FC = () => {
@@ -31,6 +34,7 @@ export const ReviewDetailsPage: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { addToast } = useToast();
+  const { user } = useAuth();
 
   const [notes, setNotes] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -147,7 +151,15 @@ export const ReviewDetailsPage: React.FC = () => {
     rejectionConsequence = "Holds invoice for manual finance credit/debit recalculation.";
   }
 
-  const isResolved = review.status !== "PENDING";
+  const currentUserId = user?.id;
+  const currentUserEmail = user?.email;
+  const isMakerCheckerViolation = Boolean(
+    po?.createdBy &&
+    user &&
+    (po.createdBy === currentUserId || po.createdBy === currentUserEmail)
+  );
+
+  const isResolved = review.status !== "PENDING" && review.status !== "ESCALATED";
   const quickTemplates = [
     "Pricing verified against executed MSA addendum.",
     "Approved within permissible 2% variance threshold.",
@@ -171,21 +183,41 @@ export const ReviewDetailsPage: React.FC = () => {
                 Exception Inspection
               </h1>
               <StageBadge stage={review.stage} />
-              <span
-                className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
-                  review.status === "APPROVED"
-                    ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                    : review.status === "REJECTED"
-                    ? "bg-red-100 text-red-800 border border-red-200"
-                    : "bg-amber-100 text-amber-800 border border-amber-200"
-                }`}
-              >
-                {review.status}
-              </span>
+              {review.status === "ESCALATED" ? (
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase bg-amber-500 text-white border border-amber-600 flex items-center space-x-1 shadow-xs animate-pulse">
+                  <Clock className="w-3 h-3" />
+                  <span>SLA ESCALATED (24h+)</span>
+                </span>
+              ) : (
+                <span
+                  className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase ${
+                    review.status === "APPROVED"
+                      ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                      : review.status === "REJECTED"
+                      ? "bg-red-100 text-red-800 border border-red-200"
+                      : "bg-amber-100 text-amber-800 border border-amber-200"
+                  }`}
+                >
+                  {review.status}
+                </span>
+              )}
             </div>
             <p className="text-xs text-workspace-muted mt-1">
               Logged {formatDate(review.createdAt, true)} by Agent:{" "}
               <strong className="text-workspace-text font-mono">{review.requestedByAgent}</strong>
+              {po?.version && po.version > 1 && (
+                <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono text-[10px] font-bold">
+                  v{po.version}
+                </span>
+              )}
+              {po?.previousVersionId && (
+                <Link
+                  to={`/pos/${po.previousVersionId}`}
+                  className="ml-1 text-[11px] text-accent-primary hover:underline font-mono"
+                >
+                  (Supersedes v{(po.version || 2) - 1})
+                </Link>
+              )}
             </p>
           </div>
         </div>
@@ -225,6 +257,32 @@ export const ReviewDetailsPage: React.FC = () => {
 
         {/* PANEL 2: Center Discrepancy & Evidence Analysis (5 Columns) */}
         <div className="xl:col-span-5 space-y-5">
+          {/* Rule 4: Repeated Failure Diagnosis & Suggested Fix */}
+          {review.suggestedFix && (
+            <div className="workspace-card p-5 space-y-3 border-l-4 border-l-indigo-600 bg-indigo-50/20">
+              <div className="flex items-center justify-between pb-2 border-b border-indigo-100">
+                <div className="flex items-center space-x-2">
+                  <Lightbulb className="w-4 h-4 text-indigo-600" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-950 font-mono">
+                    Autonomous Failure Diagnosis & Suggested Fix
+                  </h3>
+                </div>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200 uppercase">
+                  {review.suggestedFix.rootCauseCategory}
+                </span>
+              </div>
+              <div className="space-y-2 text-xs">
+                <div>
+                  <span className="font-semibold text-slate-600 block text-[11px]">Observed Failure Pattern:</span>
+                  <p className="text-slate-900 font-medium">{review.suggestedFix.failurePatternSummary}</p>
+                </div>
+                <div className="p-3 bg-indigo-50/50 rounded-lg border border-indigo-200">
+                  <span className="font-bold text-indigo-900 block text-[11px]">Recommended Corrective Action:</span>
+                  <p className="text-indigo-950 text-xs mt-0.5">{review.suggestedFix.recommendedAction}</p>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Complete Pipeline Re-Analysis Discrepancy Report (Nodes 02–06) */}
           {review.discrepancyReport && review.discrepancyReport.length > 0 && (
             <div className="workspace-card p-5 space-y-4 border-l-4 border-l-red-500 bg-red-50/20">
@@ -275,11 +333,19 @@ export const ReviewDetailsPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[10px]">
                       <div className="bg-emerald-50 p-2 rounded border border-emerald-100">
                         <span className="text-emerald-700 uppercase font-bold block text-[9px]">Expected:</span>
-                        <span className="text-emerald-950 font-semibold">{String(disc.expectedValue)}</span>
+                        <span className="text-emerald-950 font-semibold">
+                          {disc.expectedValue !== null && disc.expectedValue !== undefined && disc.expectedValue !== ""
+                            ? String(disc.expectedValue)
+                            : "N/A"}
+                        </span>
                       </div>
                       <div className="bg-amber-50 p-2 rounded border border-amber-100">
                         <span className="text-amber-700 uppercase font-bold block text-[9px]">Extracted:</span>
-                        <span className="text-amber-950 font-semibold">{String(disc.extractedValue)}</span>
+                        <span className="text-amber-950 font-semibold">
+                          {disc.extractedValue !== null && disc.extractedValue !== undefined && disc.extractedValue !== ""
+                            ? String(disc.extractedValue)
+                            : "N/A"}
+                        </span>
                       </div>
                     </div>
 
@@ -310,7 +376,9 @@ export const ReviewDetailsPage: React.FC = () => {
                   Contract / Expected Rule
                 </span>
                 <p className="text-sm font-bold text-emerald-950 font-mono mt-1">
-                  {review.expectedValue || "Standard Catalog Baseline"}
+                  {review.expectedValue !== null && review.expectedValue !== undefined && review.expectedValue !== ""
+                    ? String(review.expectedValue)
+                    : "Standard Catalog Baseline"}
                 </p>
                 <span className="text-[10px] text-emerald-700 block mt-1">
                   Per authorized rate schedule
@@ -322,7 +390,9 @@ export const ReviewDetailsPage: React.FC = () => {
                   PO Extracted Value
                 </span>
                 <p className="text-sm font-bold text-amber-950 font-mono mt-1">
-                  {review.actualValue || "Value in Uploaded Document"}
+                  {review.actualValue !== null && review.actualValue !== undefined && review.actualValue !== ""
+                    ? String(review.actualValue)
+                    : "Value in Uploaded Document"}
                 </p>
                 <span className="text-[10px] text-amber-700 block mt-1">
                   Requires human authorization
@@ -427,6 +497,19 @@ export const ReviewDetailsPage: React.FC = () => {
 
             {!isResolved ? (
               <div className="space-y-4">
+                {/* Maker-Checker Segregation of Duties Warning */}
+                {isMakerCheckerViolation && (
+                  <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
+                    <div className="font-bold flex items-center space-x-1.5 text-amber-800">
+                      <ShieldAlert className="w-4 h-4 text-amber-600" />
+                      <span>Segregation of Duties (Maker-Checker)</span>
+                    </div>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      You submitted this purchase order. Enterprise financial control policy requires an independent reviewer to approve or reject this exception.
+                    </p>
+                  </div>
+                )}
+
                 {/* Quick Templates */}
                 <div>
                   <label className="block text-[11px] font-semibold text-workspace-muted mb-1.5">
@@ -438,7 +521,8 @@ export const ReviewDetailsPage: React.FC = () => {
                         key={idx}
                         type="button"
                         onClick={() => setNotes(tmpl)}
-                        className="w-full text-left p-2 rounded bg-slate-50 hover:bg-slate-100 border border-workspace-border text-[11px] text-workspace-text transition"
+                        disabled={isMakerCheckerViolation}
+                        className="w-full text-left p-2 rounded bg-slate-50 hover:bg-slate-100 border border-workspace-border text-[11px] text-workspace-text transition disabled:opacity-50"
                       >
                         {tmpl}
                       </button>
@@ -454,8 +538,9 @@ export const ReviewDetailsPage: React.FC = () => {
                   <textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
+                    disabled={isMakerCheckerViolation}
                     placeholder="Document operational or commercial justification..."
-                    className="w-full p-3 bg-slate-50 border border-workspace-border rounded-lg text-xs text-workspace-text placeholder-workspace-muted focus:outline-none focus:ring-1 focus:ring-accent-primary"
+                    className="w-full p-3 bg-slate-50 border border-workspace-border rounded-lg text-xs text-workspace-text placeholder-workspace-muted focus:outline-none focus:ring-1 focus:ring-accent-primary disabled:opacity-50"
                     rows={4}
                   />
                 </div>
@@ -465,7 +550,8 @@ export const ReviewDetailsPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => approveMutation.mutate()}
-                    disabled={approveMutation.isPending || rejectMutation.isPending}
+                    disabled={isMakerCheckerViolation || approveMutation.isPending || rejectMutation.isPending}
+                    title={isMakerCheckerViolation ? "Cannot approve documents you submitted (Segregation of Duties)" : undefined}
                     className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 flex items-center justify-center space-x-2"
                   >
                     <Check className="w-4 h-4" />
@@ -477,8 +563,9 @@ export const ReviewDetailsPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowRejectModal(true)}
-                    disabled={approveMutation.isPending || rejectMutation.isPending}
-                    className="w-full py-2 px-4 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-semibold transition"
+                    disabled={isMakerCheckerViolation || approveMutation.isPending || rejectMutation.isPending}
+                    title={isMakerCheckerViolation ? "Cannot reject documents you submitted (Segregation of Duties)" : undefined}
+                    className="w-full py-2 px-4 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-semibold transition disabled:opacity-50"
                   >
                     Reject Exception
                   </button>

@@ -70,7 +70,19 @@ export class MockOCRProvider implements DocumentExtractor {
 
     // Support testing low confidence or invalid files
     const fileName = input.fileName.toLowerCase();
-    const isLowConfidence = fileName.includes("low_confidence") || fileName.includes("blurry");
+    const isLowConfidence =
+      fileName.includes("low_confidence") ||
+      fileName.includes("blurry") ||
+      fileName.includes("scanned") ||
+      fileName.includes("skew") ||
+      fileName.includes("lowres") ||
+      fileName.includes("fax") ||
+      fileName.includes("shadow") ||
+      fileName.includes("photo") ||
+      fileName.includes("handwritten") ||
+      fileName.includes("strike") ||
+      fileName.includes("ambiguous") ||
+      fileName.includes("missing");
     const isDuplicate = fileName.includes("duplicate");
 
     // Helper to derive a natural, clean entity name from the uploaded filename
@@ -780,9 +792,71 @@ export class MistralOCRProvider implements DocumentExtractor {
   }
 }
 
+/**
+ * Chained Fallback Document Extractor (Rule 10):
+ * Enforces the strict enterprise provider hierarchy:
+ * 1. AWS Bedrock (Primary)
+ * 2. Mistral AI (Secondary Fallback)
+ * 3. Google Gemini Vision (Tertiary Fallback)
+ * 4. Local Mock / Deterministic Parser (Dev / Test Fallback)
+ * Logs duration, errors, and isolated attempts per provider.
+ */
+export class ChainedFallbackOCRProvider implements DocumentExtractor {
+  private rawResult: any = null;
+
+  getRawResult(): any {
+    return this.rawResult;
+  }
+
+  async extract(input: DocumentInput): Promise<ExtractedPOData> {
+    const candidates: Array<{ name: string; extractor: () => DocumentExtractor }> = [
+      { name: "AWS Bedrock (Llama 3.1 70B)", extractor: () => new BedrockOCRProvider() },
+      { name: "Mistral AI (Pixtral 12B)", extractor: () => new MistralOCRProvider() },
+      { name: "Google Gemini Vision", extractor: () => new GeminiVisionProvider() },
+      { name: "Local Mock / Deterministic Parser", extractor: () => new MockOCRProvider() }
+    ];
+
+    let lastError: any = null;
+
+    for (const candidate of candidates) {
+      const startTime = Date.now();
+      try {
+        logger.info(
+          { provider: candidate.name, fileName: input.fileName },
+          `AI Fallback Chain: Attempting document extraction via ${candidate.name}`
+        );
+        const providerInstance = candidate.extractor();
+        const result = await providerInstance.extract(input);
+        const latencyMs = Date.now() - startTime;
+        this.rawResult = providerInstance.getRawResult?.();
+        logger.info(
+          {
+            provider: candidate.name,
+            latencyMs,
+            confidence: result.confidence,
+            poNumber: result.poNumber,
+            lineItemsCount: result.lineItems.length
+          },
+          `AI Fallback Chain: Extraction succeeded via ${candidate.name}`
+        );
+        return result;
+      } catch (err: any) {
+        const latencyMs = Date.now() - startTime;
+        logger.warn(
+          { provider: candidate.name, latencyMs, err: err.message },
+          `AI Fallback Chain: ${candidate.name} failed, cascading to next fallback provider`
+        );
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error("All document extraction AI providers failed.");
+  }
+}
+
 export class DocumentExtractorFactory {
   static getExtractor(): DocumentExtractor {
-    const provider = env.DOCUMENT_AI_PROVIDER;
+    const provider = (env.DOCUMENT_AI_PROVIDER as string) || "";
     switch (provider) {
       case "bedrock":
         return new BedrockOCRProvider();
@@ -792,6 +866,12 @@ export class DocumentExtractorFactory {
         return new GeminiVisionProvider();
       case "mock":
         return new MockOCRProvider();
+      case undefined:
+      case "":
+      case "chained":
+      case "auto":
+        // Default to hardened multi-provider fallback chain
+        return new ChainedFallbackOCRProvider();
       default:
         throw new Error(`Unknown DOCUMENT_AI_PROVIDER: ${provider}`);
     }

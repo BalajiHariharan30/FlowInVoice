@@ -1,9 +1,11 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
-import { v4 as uuidv4, validate as isValidUuid } from "uuid";
+import { v4 as uuidv4, v5 as uuidv5, validate as isValidUuid } from "uuid";
 import { env } from "../config/env.js";
 import { DocumentChunk } from "./chunking.js";
 import { EmbeddingService } from "./embeddings.js";
 import { logger } from "../utils/logger.js";
+
+const NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 export interface SearchResult {
   chunk: DocumentChunk;
@@ -58,7 +60,10 @@ export class QdrantService {
 
       if (this.isQdrantActive() && this.client) {
         try {
-          const pointId = isValidUuid(chunk.chunkId) ? chunk.chunkId : uuidv4();
+          const pointId = isValidUuid(chunk.chunkId)
+            ? chunk.chunkId
+            : uuidv5(`${chunk.tenantId}:${chunk.chunkId}`, NAMESPACE);
+
           await this.client.upsert(this.COLLECTION_NAME, {
             wait: true,
             points: [
@@ -83,15 +88,48 @@ export class QdrantService {
           logger.error({ err, chunkId: chunk.chunkId }, "Failed to upsert to Qdrant");
         }
       } else {
-        // Mock store
-        this.mockStore.push({
-          id: chunk.chunkId,
-          vector,
-          chunk
-        });
+        // Mock store — update in place if already indexed
+        const existingIdx = this.mockStore.findIndex(
+          (item) => item.chunk.tenantId === chunk.tenantId && item.chunk.chunkId === chunk.chunkId
+        );
+        if (existingIdx >= 0) {
+          this.mockStore[existingIdx] = { id: chunk.chunkId, vector, chunk };
+        } else {
+          this.mockStore.push({
+            id: chunk.chunkId,
+            vector,
+            chunk
+          });
+        }
       }
     }
     logger.info({ count: chunks.length }, "Indexed chunks in vector store");
+  }
+
+  static async deletePointsByFilter(tenantId: string, filter: Record<string, any>): Promise<void> {
+    if (this.isQdrantActive() && this.client) {
+      try {
+        const mustFilters: any[] = [{ key: "tenantId", match: { value: tenantId } }];
+        for (const [key, value] of Object.entries(filter)) {
+          mustFilters.push({ key, match: { value } });
+        }
+        await (this.client as any).delete(this.COLLECTION_NAME, {
+          filter: { must: mustFilters }
+        });
+        logger.info({ tenantId, filter }, "Pruned Qdrant vector points by filter");
+      } catch (err: any) {
+        logger.warn({ err: err.message, tenantId, filter }, "Failed to delete points from Qdrant");
+      }
+    } else {
+      // Prune in mock store
+      this.mockStore = this.mockStore.filter((item) => {
+        if (item.chunk.tenantId !== tenantId) return true;
+        for (const [key, val] of Object.entries(filter)) {
+          if ((item.chunk as any)[key] === val) return false;
+        }
+        return true;
+      });
+    }
   }
 
   static async search(

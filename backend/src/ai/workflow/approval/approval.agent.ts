@@ -31,7 +31,7 @@ export function createApprovalDecisionNode(tenantId: string) {
     const latency = Date.now() - startTime;
 
     if (approvalRequired) {
-      const reason = state.approvalReason || state.validationErrors[0] || "Policy exception requiring approval";
+      const reason = state.approvalReason || state.validationErrors?.[0] || "Policy exception requiring approval";
       logger.info({ tenantId, poId: state.poId, reason }, "Approval required for purchase order");
 
       await AuditRepository.create(tenantId, {

@@ -2,7 +2,8 @@ import { Queue, Worker, Job } from "bullmq";
 import Redis, { RedisOptions } from "ioredis";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
-import { POProcessingWorkflow } from "../agents/workflow.js";
+import { runOrchestrationWorkflow } from "../ai/workflow/graph.js";
+import { PurchaseOrderRepository, ReviewRepository } from "../repositories/index.js";
 
 export interface POProcessingJobData {
   tenantId: string;
@@ -28,21 +29,18 @@ function getRedisConfig(): { url?: string; options: RedisOptions } {
   const retryStrategy = (times: number) => {
     // Retry with exponential backoff: 500ms, 1000ms, 2000ms, 4000ms, max 10000ms
     const delay = Math.min(Math.pow(2, Math.min(times, 5)) * 500, 10000);
-    logger.warn({ attempt: times, nextRetryMs: delay }, "ioredis: retrying Redis connection with exponential backoff");
     return delay;
   };
 
   if (isUrlConfigured && rawUrl) {
-    const isTls = rawUrl.startsWith("rediss://");
     return {
       url: rawUrl,
       options: {
         maxRetriesPerRequest: null,
-        connectTimeout: 10000,
-        enableOfflineQueue: false,
+        enableReadyCheck: false,
+        retryStrategy,
         lazyConnect: true,
-        tls: isTls ? { rejectUnauthorized: false } : undefined,
-        retryStrategy
+        connectTimeout: 5000
       }
     };
   }
@@ -53,10 +51,10 @@ function getRedisConfig(): { url?: string; options: RedisOptions } {
       port: env.REDIS_PORT || 6379,
       password: env.REDIS_PASSWORD || undefined,
       maxRetriesPerRequest: null,
-      connectTimeout: 10000,
-      enableOfflineQueue: false,
+      enableReadyCheck: false,
+      retryStrategy,
       lazyConnect: true,
-      retryStrategy
+      connectTimeout: 5000
     }
   };
 }
@@ -70,53 +68,39 @@ function createRedisClient(): Redis {
 }
 
 export class QueueManager {
-  private static queueConnection: Redis | null = null;
-  private static workerConnection: Redis | null = null;
   private static poQueue: Queue | null = null;
   private static poWorker: Worker | null = null;
-  private static isMock = true;
-  private static isConnecting = false;
+  private static queueConnection: Redis | null = null;
+  private static workerConnection: Redis | null = null;
+  private static isMock: boolean = true;
+  private static isConnecting: boolean = false;
   private static reconnectTimer: NodeJS.Timeout | null = null;
   private static lastError: string | null = null;
-  private static connectAttempts = 0;
+  private static connectAttempts: number = 0;
 
   static async initialize(): Promise<void> {
     if (this.isConnecting) return;
     this.isConnecting = true;
+    this.connectAttempts++;
 
-    const maxStartupAttempts = 3;
-    let attempt = 0;
+    const maxStartupAttempts = 2;
     let lastErr: any = null;
 
-    while (attempt < maxStartupAttempts) {
-      attempt++;
-      this.connectAttempts = attempt;
+    for (let attempt = 1; attempt <= maxStartupAttempts; attempt++) {
       try {
-        logger.info(
-          {
-            attempt,
-            maxAttempts: maxStartupAttempts,
-            configured: Boolean(env.REDIS_URL || env.REDIS_HOST)
-          },
-          "QueueManager: Connecting to Redis with exponential backoff"
-        );
-
         await this.closeConnections();
 
-        // Instantiate dedicated Redis connections for Queue and Worker (required by BullMQ)
         this.queueConnection = createRedisClient();
         this.workerConnection = createRedisClient();
 
         this.queueConnection.on("error", (err) => {
-          this.lastError = err.message;
-          if (!this.isMock) {
+          if (!err.message?.includes("ECONNREFUSED") && !err.message?.includes("ENOTFOUND")) {
             logger.warn({ err: err.message }, "BullMQ Queue Redis connection warning");
           }
         });
 
         this.workerConnection.on("error", (err) => {
-          this.lastError = err.message;
-          if (!this.isMock) {
+          if (!err.message?.includes("ECONNREFUSED") && !err.message?.includes("ENOTFOUND")) {
             logger.warn({ err: err.message }, "BullMQ Worker Redis connection warning");
           }
         });
@@ -133,7 +117,8 @@ export class QueueManager {
           defaultJobOptions: {
             attempts: 3,
             backoff: { type: "exponential", delay: 2000 },
-            removeOnComplete: true
+            removeOnComplete: true,
+            removeOnFail: 100
           }
         });
 
@@ -142,7 +127,12 @@ export class QueueManager {
           "po-processing",
           async (job: Job<POProcessingJobData>) => {
             logger.info({ jobId: job.id, data: job.data }, "Processing PO job via live BullMQ worker");
-            await POProcessingWorkflow.runWorkflow(job.data.tenantId, job.data.poId);
+            const po = await PurchaseOrderRepository.findById(job.data.tenantId, job.data.poId);
+            if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
+              logger.info({ poId: job.data.poId, status: po?.status }, "BullMQ worker: Skipping execution for non-processable PO");
+              return;
+            }
+            await runOrchestrationWorkflow(job.data.tenantId, job.data.poId);
           },
           { connection: this.workerConnection }
         );
@@ -150,6 +140,7 @@ export class QueueManager {
         this.isMock = false;
         this.lastError = null;
         this.isConnecting = false;
+        this.startSlaWatcher();
         logger.info("BullMQ queue & worker initialized successfully with dedicated live Redis connections");
         return;
       } catch (err: any) {
@@ -171,6 +162,7 @@ export class QueueManager {
     await this.closeConnections();
     this.isMock = true;
     this.isConnecting = false;
+    this.startSlaWatcher();
 
     if (env.REQUIRE_REDIS) {
       throw new Error(
@@ -189,6 +181,19 @@ export class QueueManager {
 
     // Schedule background self-healing reconnect probe for hibernating/sleeping instances
     this.scheduleReconnectWatcher();
+  }
+
+  private static slaInterval: NodeJS.Timeout | null = null;
+
+  private static startSlaWatcher(): void {
+    if (this.slaInterval) return;
+    this.slaInterval = setInterval(async () => {
+      try {
+        await ReviewRepository.escalateStaleReviews(undefined, 24);
+      } catch (err: any) {
+        logger.warn({ err: err.message }, "Background SLA escalation check encountered an error");
+      }
+    }, 300000); // Check every 5 minutes
   }
 
   private static scheduleReconnectWatcher(): void {
@@ -254,14 +259,18 @@ export class QueueManager {
   }
 
   static async addPOProcessingJob(tenantId: string, poId: string): Promise<string> {
-    const jobId = `${tenantId}:${poId}:${Date.now()}`;
+    const jobId = `po-process:${tenantId}:${poId}`;
 
     if (!this.isMock && this.poQueue) {
       try {
         await this.poQueue.add(
           "process-po",
           { tenantId, poId, attempt: 1 },
-          { jobId }
+          {
+            jobId,
+            removeOnComplete: true,
+            removeOnFail: 100
+          }
         );
         logger.info({ jobId, queue: "po-processing" }, "Successfully enqueued PO job to BullMQ");
         return jobId;
@@ -275,7 +284,12 @@ export class QueueManager {
     setTimeout(async () => {
       try {
         logger.info({ tenantId, poId, jobId }, "Async Queue: Starting PO processing workflow");
-        await POProcessingWorkflow.runWorkflow(tenantId, poId);
+        const po = await PurchaseOrderRepository.findById(tenantId, poId);
+        if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
+          logger.info({ poId, status: po?.status }, "Async Queue: Skipping execution for non-processable PO");
+          return;
+        }
+        await runOrchestrationWorkflow(tenantId, poId);
       } catch (e: any) {
         logger.error({ e: e.message, tenantId, poId }, "Async PO processing error");
       }

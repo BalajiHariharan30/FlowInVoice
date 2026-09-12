@@ -27,7 +27,10 @@ import {
   ChevronRight,
   Code2,
   FileCheck2,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Trash2,
+  XCircle,
+  GitBranch
 } from "lucide-react";
 
 
@@ -88,6 +91,28 @@ export const PODetailsPage: React.FC = () => {
     },
     enabled: !!id
   });
+
+  interface POVersionSummary {
+    id: string;
+    poNumber: string;
+    version: number;
+    previousVersionId: string | null;
+    status: POStatus;
+    totalAmount: number;
+    currency: string;
+    createdAt: string;
+    createdBy?: string;
+  }
+
+  const { data: versionChainData } = useQuery<{ data: POVersionSummary[] }>({
+    queryKey: ["po-version-chain", id],
+    queryFn: async () => {
+      const res = await apiClient.get<{ data: POVersionSummary[] }>(`/pos/${id}/version-chain`);
+      return res.data;
+    },
+    enabled: !!id
+  });
+  const versionChain = versionChainData?.data || [];
 
   // Query for generated invoice if completed
   const { data: invoiceData } = useQuery({
@@ -273,6 +298,42 @@ export const PODetailsPage: React.FC = () => {
     setTimeout(() => setCopiedJson(false), 2000);
   };
 
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.delete(`/pos/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      addToast({
+        type: "success",
+        title: "Purchase Order Deleted",
+        message: `PO ${po?.poNumber || id} was soft-deleted.`
+      });
+      queryClient.invalidateQueries({ queryKey: ["pos"] });
+      queryClient.invalidateQueries({ queryKey: ["po", id] });
+      queryClient.invalidateQueries({ queryKey: ["reviews"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      navigate("/pos");
+    },
+    onError: (err: any) => {
+      addToast({
+        type: "error",
+        title: "Delete Failed",
+        message: err.response?.data?.message || err?.message || "Failed to delete purchase order."
+      });
+    }
+  });
+
+  const handleDelete = () => {
+    if (
+      window.confirm(
+        `Are you sure you want to delete purchase order ${po?.poNumber || id}? This will cancel any pending reviews and remove vector indices.`
+      )
+    ) {
+      deleteMutation.mutate();
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -299,6 +360,7 @@ export const PODetailsPage: React.FC = () => {
 
   const currentStatus = liveStatus || po.status;
   const isFailed = currentStatus === "FAILED";
+  const isRejected = currentStatus === "REJECTED";
   const isHumanReview = currentStatus === "HUMAN_REVIEW";
   const isCompleted = currentStatus === "COMPLETED";
   const reviews = reviewsData?.data || [];
@@ -334,6 +396,19 @@ export const PODetailsPage: React.FC = () => {
             </Link>
             <ChevronRight className="w-3.5 h-3.5 text-workspace-muted" />
             <span className="font-mono text-workspace-text font-semibold">{po.poNumber}</span>
+            {po.version && po.version > 1 && (
+              <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono text-[10px] font-bold">
+                v{po.version}
+              </span>
+            )}
+            {po.previousVersionId && (
+              <Link
+                to={`/pos/${po.previousVersionId}`}
+                className="text-[11px] text-accent-primary hover:underline font-mono"
+              >
+                (Supersedes v{(po.version || 2) - 1})
+              </Link>
+            )}
 
             {allPosData && allPosData.length > 1 && (
               <div className="flex items-center space-x-1.5 ml-3 bg-white border border-workspace-border rounded-lg px-2 py-0.5 shadow-subtle">
@@ -377,9 +452,9 @@ export const PODetailsPage: React.FC = () => {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={runLangGraphWithTelemetry}
-            disabled={isStreaming || runLangGraphMutation.isPending || currentStatus === "COMPLETED"}
+            disabled={isStreaming || runLangGraphMutation.isPending || currentStatus === "COMPLETED" || isRejected}
             className="inline-flex items-center space-x-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm transition"
-            title="Execute autonomous 7-agent LangGraph workflow with real-time SSE streaming telemetry"
+            title={isRejected ? "Cannot run pipeline on REJECTED purchase order" : "Execute autonomous 7-agent LangGraph workflow with real-time SSE streaming telemetry"}
           >
             <Sparkles className={`w-3.5 h-3.5 ${isStreaming || runLangGraphMutation.isPending ? "animate-spin" : ""}`} />
             <span>
@@ -452,8 +527,69 @@ export const PODetailsPage: React.FC = () => {
               </>
             )}
           </button>
+
+          <button
+            onClick={handleDelete}
+            disabled={deleteMutation.isPending}
+            className="inline-flex items-center space-x-1.5 px-3 py-2 bg-white hover:bg-red-50 border border-red-200 text-red-600 hover:text-red-700 text-xs font-medium rounded-lg shadow-sm transition disabled:opacity-50"
+            title="Delete Purchase Order"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{deleteMutation.isPending ? "Deleting..." : "Delete"}</span>
+          </button>
         </div>
       </div>
+
+      {/* Revision History Lineage Bar (Fix 2) */}
+      {versionChain.length > 1 && (
+        <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/60 to-slate-50 border border-blue-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-xs">
+          <div className="flex items-center space-x-2 text-xs text-blue-900 font-semibold">
+            <GitBranch className="w-4 h-4 text-blue-600 shrink-0" />
+            <span>Revision History ({versionChain.length} versions):</span>
+          </div>
+          <div className="flex items-center space-x-2 overflow-x-auto pb-1 sm:pb-0">
+            {versionChain.map((v, idx) => {
+              const isCurrent = v.id === id;
+              return (
+                <React.Fragment key={v.id}>
+                  {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-blue-300 shrink-0" />}
+                  <Link
+                    to={`/pos/${v.id}`}
+                    className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-mono transition ${
+                      isCurrent
+                        ? "bg-blue-600 text-white font-bold shadow-xs ring-2 ring-blue-300"
+                        : "bg-white text-slate-700 hover:bg-blue-100/80 border border-blue-200 font-medium"
+                    }`}
+                  >
+                    <span>v{v.version || idx + 1}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded font-sans uppercase font-bold ${
+                        isCurrent ? "bg-blue-700 text-blue-100" : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {v.status}
+                    </span>
+                    {isCurrent && <span className="text-[10px] font-sans font-bold">(Current)</span>}
+                  </Link>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Terminal Rejection Banner (Rule 1) */}
+      {isRejected && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs space-y-1 shadow-sm">
+          <div className="flex items-center space-x-2 font-bold text-red-800 text-sm">
+            <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <span>Purchase Order Rejected (Terminal State)</span>
+          </div>
+          <p className="text-red-700 leading-relaxed pl-7">
+            This purchase order was rejected during review ({po.failureReason || po.terminationReason || "Exception rejected"}). All pipeline processing is permanently halted. To submit a corrected document, please upload a new version.
+          </p>
+        </div>
+      )}
 
       {/* Failure Alert Banner */}
       {isFailed && po.failureReason && (

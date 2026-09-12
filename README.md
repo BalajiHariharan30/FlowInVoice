@@ -34,8 +34,8 @@ Customer Email / Upload → S3 Storage → Intake Agent → PO Extraction Agent
 - **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, TanStack Query v5, Axios, React Hook Form, Zod, React Router v6, Recharts, Lucide icons.
 - **Data & Vector Stores**: MongoDB Atlas / local MongoDB, Qdrant Vector DB, Amazon S3 / local storage provider, Redis / in-memory runner.
 - **Provider Abstractions**:
-  - LLM: `Mistral Small` → `Groq Llama 3.3 70B` → `OpenRouter` → `Dev Mock`.
-  - Document AI: `Mistral OCR` / `Vision Fallback` / `Dev Mock`.
+  - LLM: `AWS Bedrock (Llama 3.1 70B)` → `Mistral AI` → `Google Gemini` → `Dev Mock`.
+  - Document AI / OCR: `AWS Bedrock` → `Mistral OCR` → `Gemini Vision` → `Dev Mock`.
   - Storage: `Amazon S3` (presigned URLs) / `Dev Mock`.
   - Vector DB: `Qdrant` (strict tenant isolation filtering) / `Dev Mock`.
 

@@ -131,6 +131,10 @@ export interface IPurchaseOrder extends Document {
   humanReviewedBy?: string;
   terminatedAt?: Date;
   terminationReason?: string;
+  deletedAt?: Date;
+  createdBy?: string;
+  previousVersionId?: string;
+  version?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -158,7 +162,8 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
         "INVOICE_GENERATING",
         "INVOICE_VALIDATING",
         "COMPLETED",
-        "FAILED"
+        "FAILED",
+        "DELETED"
       ],
       default: "UPLOADED",
       index: true
@@ -185,7 +190,11 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
     humanReviewedAt: { type: Date },
     humanReviewedBy: { type: String },
     terminatedAt: { type: Date },
-    terminationReason: { type: String }
+    terminationReason: { type: String },
+    deletedAt: { type: Date },
+    createdBy: { type: String },
+    previousVersionId: { type: String, index: true },
+    version: { type: Number, default: 1 }
   },
   { timestamps: true }
 );
@@ -194,7 +203,8 @@ PurchaseOrderSchema.index(
   {
     unique: true,
     partialFilterExpression: {
-      poNumber: { $type: "string", $gt: "" }
+      poNumber: { $type: "string", $gt: "" },
+      status: { $nin: ["REJECTED", "FAILED", "DELETED"] }
     }
   }
 );
@@ -353,6 +363,11 @@ export interface IHumanReview extends Document {
   actualValue?: string;
   evidence: IEvidenceItem[];
   discrepancyReport?: IDiscrepancyItem[];
+  suggestedFix?: {
+    failurePatternSummary: string;
+    rootCauseCategory: string;
+    recommendedAction: string;
+  };
   assignedTo?: string;
   resolutionNotes?: string;
   rejectionReason?: string;
@@ -369,7 +384,7 @@ const HumanReviewSchema = new Schema<IHumanReview>(
     entity: { type: String, enum: ["purchase_order", "invoice"], required: true },
     entityId: { type: String, required: true, index: true },
     stage: { type: String, enum: ["extraction", "validation", "invoice"], required: true, index: true },
-    status: { type: String, enum: ["PENDING", "APPROVED", "REJECTED"], default: "PENDING", index: true },
+    status: { type: String, enum: ["PENDING", "APPROVED", "REJECTED", "ESCALATED"], default: "PENDING", index: true },
     priority: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "MEDIUM" },
     reason: { type: String, required: true },
     requestedByAgent: { type: String, required: true },
@@ -377,6 +392,11 @@ const HumanReviewSchema = new Schema<IHumanReview>(
     actualValue: { type: String },
     evidence: [EvidenceItemSchema],
     discrepancyReport: [DiscrepancyItemSchema],
+    suggestedFix: {
+      failurePatternSummary: { type: String },
+      rootCauseCategory: { type: String },
+      recommendedAction: { type: String }
+    },
     assignedTo: { type: String },
     resolutionNotes: { type: String },
     rejectionReason: { type: String },
@@ -539,6 +559,43 @@ const ProductSchema = new Schema<IProduct>(
 );
 ProductSchema.index({ tenantId: 1, sku: 1 }, { unique: true });
 
+// -------------------------------------------------------------
+// 10. Workflow Checkpoint Model (LangGraph Persistence)
+// -------------------------------------------------------------
+export interface IWorkflowCheckpoint extends Document {
+  tenantId: string;
+  threadId: string;
+  checkpointNs: string;
+  checkpointId: string;
+  parentCheckpointId?: string;
+  checkpoint: any;
+  metadata?: any;
+  newVersions?: any;
+  pendingWrites?: any[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const WorkflowCheckpointSchema = new Schema<IWorkflowCheckpoint>(
+  {
+    tenantId: { type: String, required: true, index: true },
+    threadId: { type: String, required: true, index: true },
+    checkpointNs: { type: String, default: "" },
+    checkpointId: { type: String, required: true },
+    parentCheckpointId: { type: String },
+    checkpoint: { type: Schema.Types.Mixed, required: true },
+    metadata: { type: Schema.Types.Mixed, default: {} },
+    newVersions: { type: Schema.Types.Mixed, default: {} },
+    pendingWrites: { type: [Schema.Types.Mixed], default: [] }
+  },
+  { timestamps: true }
+);
+
+WorkflowCheckpointSchema.index(
+  { tenantId: 1, threadId: 1, checkpointNs: 1, checkpointId: 1 },
+  { unique: true }
+);
+
 // Export Models
 export const Customer = mongoose.model<ICustomer>("Customer", CustomerSchema);
 export const Contract = mongoose.model<IContract>("Contract", ContractSchema);
@@ -549,3 +606,4 @@ export const ValidationResult = mongoose.model<IValidationResult>("ValidationRes
 export const AuditLog = mongoose.model<IAuditLog>("AuditLog", AuditLogSchema);
 export const User = mongoose.model<IUser>("User", UserSchema);
 export const Product = mongoose.model<IProduct>("Product", ProductSchema);
+export const WorkflowCheckpoint = mongoose.model<IWorkflowCheckpoint>("WorkflowCheckpoint", WorkflowCheckpointSchema);

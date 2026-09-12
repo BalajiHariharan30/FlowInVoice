@@ -3,7 +3,7 @@ import { asyncHandler } from "../middleware/error-handler.js";
 import { authenticate } from "../../auth/auth.middleware.js";
 import { InvoiceRepository, PurchaseOrderRepository } from "../../repositories/index.js";
 import { StorageService } from "../../storage/s3.service.js";
-import { POProcessingWorkflow } from "../../agents/workflow.js";
+import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
 import { InvoiceStatus } from "../../types/index.js";
 
 export const invoiceRouter = Router();
@@ -120,7 +120,7 @@ invoiceRouter.post("/:poId/generate", async (req: Request, res: Response): Promi
 
   // Trigger invoice generation step in workflow
   await PurchaseOrderRepository.updateStatus(tenantId, po._id.toString(), "APPROVED");
-  await POProcessingWorkflow.runWorkflow(tenantId, po._id.toString());
+  await runOrchestrationWorkflow(tenantId, po._id.toString());
 
   const invoice = await InvoiceRepository.findByPoId(tenantId, po._id.toString());
 
@@ -166,7 +166,11 @@ invoiceRouter.get("/:invoiceId/download", async (req: Request, res: Response): P
   }
 
   // Generate 5-minute presigned download URL
-  const { url, expiresAt } = await StorageService.getPresignedDownloadUrl(invoice.s3PdfKey, 300);
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const userToken = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.split(" ")[1]
+    : undefined;
+  const { url, expiresAt } = await StorageService.getPresignedDownloadUrl(invoice.s3PdfKey, 300, baseUrl, userToken);
 
   res.status(200).json({
     url,

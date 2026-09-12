@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiClient } from "../../lib/axios";
 import { PurchaseOrder, PaginatedResponse, POStatus } from "../../types";
 import { formatCurrency, formatDate } from "../../lib/format";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { LoadingSkeleton, EmptyState, ErrorBanner } from "../../components/feedback";
+import { useToast } from "../../contexts/ToastContext";
 import {
   Search,
   UploadCloud,
@@ -15,18 +16,54 @@ import {
   ArrowUpRight,
   Receipt,
   Clock,
-  Sparkles
+  Sparkles,
+  Trash2
 } from "lucide-react";
 
 export const POListPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const { addToast } = useToast();
   const page = parseInt(searchParams.get("page") || "1", 10);
   const statusFilter = searchParams.get("status") || "";
   const customerFilter = searchParams.get("customer") || "";
   const [searchInput, setSearchInput] = useState(searchParams.get("search") || "");
+  const showAllVersions = searchParams.get("showAll") === "true";
+
+  const deleteMutation = useMutation({
+    mutationFn: async (poId: string) => {
+      const res = await apiClient.delete(`/pos/${poId}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      addToast({
+        type: "success",
+        title: "Purchase Order Deleted",
+        message: "Purchase order soft-deleted successfully."
+      });
+      queryClient.invalidateQueries({ queryKey: ["pos"] });
+      queryClient.invalidateQueries({ queryKey: ["reviews"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (err: any) => {
+      addToast({
+        type: "error",
+        title: "Delete Failed",
+        message: err.response?.data?.message || err?.message || "Failed to delete purchase order."
+      });
+    }
+  });
+
+  const handleDelete = (poId: string, poNumber: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (window.confirm(`Are you sure you want to delete purchase order ${poNumber}?`)) {
+      deleteMutation.mutate(poId);
+    }
+  };
 
   const { data, isLoading, error, refetch } = useQuery<PaginatedResponse<PurchaseOrder>>({
-    queryKey: ["pos", { page, status: statusFilter, customer: customerFilter, search: searchParams.get("search") || "" }],
+    queryKey: ["pos", { page, status: statusFilter, customer: customerFilter, search: searchParams.get("search") || "", showAllVersions }],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("page", String(page));
@@ -34,6 +71,7 @@ export const POListPage: React.FC = () => {
       if (statusFilter) params.set("status", statusFilter);
       if (customerFilter) params.set("customer", customerFilter);
       if (searchParams.get("search")) params.set("search", searchParams.get("search")!);
+      if (showAllVersions) params.set("latestOnly", "false");
 
       const res = await apiClient.get<PaginatedResponse<PurchaseOrder>>(`/pos?${params.toString()}`);
       return res.data;
@@ -144,7 +182,23 @@ export const POListPage: React.FC = () => {
             <option value="Globex">Globex Corporation</option>
           </select>
 
-          {(statusFilter || customerFilter || searchInput) && (
+          <label className="flex items-center space-x-1.5 text-xs text-workspace-text cursor-pointer pl-2 border-l border-workspace-border">
+            <input
+              type="checkbox"
+              checked={showAllVersions}
+              onChange={(e) => {
+                const next = new URLSearchParams(searchParams);
+                if (e.target.checked) next.set("showAll", "true");
+                else next.delete("showAll");
+                next.set("page", "1");
+                setSearchParams(next);
+              }}
+              className="rounded border-workspace-border text-accent-primary focus:ring-accent-primary h-3.5 w-3.5"
+            />
+            <span className="text-workspace-muted font-medium select-none">Show superseded versions</span>
+          </label>
+
+          {(statusFilter || customerFilter || searchInput || showAllVersions) && (
             <button
               onClick={() => {
                 setSearchInput("");
@@ -196,9 +250,21 @@ export const POListPage: React.FC = () => {
                 {displayPOs.map((po) => (
                   <tr key={po.id}>
                     <td className="font-mono font-semibold text-accent-primary">
-                      <Link to={`/pos/${po.id}`} className="hover:underline">
-                        {po.poNumber}
-                      </Link>
+                      <div className="flex items-center space-x-2">
+                        <Link to={`/pos/${po.id}`} className="hover:underline">
+                          {po.poNumber}
+                        </Link>
+                        {po.version && po.version > 1 ? (
+                          <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            v{po.version}
+                          </span>
+                        ) : null}
+                      </div>
+                      {po.previousVersionId && (
+                        <div className="text-[10px] text-workspace-muted font-normal mt-0.5">
+                          revision of v{(po.version || 2) - 1}
+                        </div>
+                      )}
                     </td>
                     <td className="font-medium text-workspace-text">{po.customerName}</td>
                     <td className="text-workspace-muted font-mono text-[11px]">
@@ -242,13 +308,23 @@ export const POListPage: React.FC = () => {
                       )}
                     </td>
                     <td className="text-right">
-                      <Link
-                        to={`/pos/${po.id}`}
-                        className="inline-flex items-center space-x-1 text-xs font-semibold text-accent-primary hover:text-accent-hover"
-                      >
-                        <span>Inspect</span>
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </Link>
+                      <div className="inline-flex items-center space-x-2">
+                        <Link
+                          to={`/pos/${po.id}`}
+                          className="inline-flex items-center space-x-1 text-xs font-semibold text-accent-primary hover:text-accent-hover"
+                        >
+                          <span>Inspect</span>
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        </Link>
+                        <button
+                          onClick={(e) => handleDelete(po.id, po.poNumber, e)}
+                          disabled={deleteMutation.isPending}
+                          className="p-1 text-slate-400 hover:text-red-600 rounded transition disabled:opacity-50"
+                          title={`Delete PO ${po.poNumber}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

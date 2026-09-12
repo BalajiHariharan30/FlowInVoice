@@ -101,7 +101,7 @@ dashboardRouter.get("/analytics", async (req: Request, res: Response, next: Next
 
     if (isDbConnected()) {
       try {
-        const [statusBreakdown, volumeTrends] = await Promise.all([
+        const [statusBreakdown, volumeTrends, processingTimes] = await Promise.all([
           PurchaseOrder.aggregate([
             { $match: { tenantId } },
             { $group: { _id: "$status", count: { $sum: 1 } } }
@@ -117,13 +117,24 @@ dashboardRouter.get("/analytics", async (req: Request, res: Response, next: Next
             },
             { $sort: { _id: 1 } },
             { $limit: 30 }
+          ]),
+          PurchaseOrder.aggregate([
+            { $match: { tenantId, status: "COMPLETED", updatedAt: { $exists: true }, createdAt: { $exists: true } } },
+            {
+              $project: {
+                durationMs: { $subtract: ["$updatedAt", "$createdAt"] }
+              }
+            },
+            { $group: { _id: null, avgMs: { $avg: "$durationMs" } } }
           ])
         ]);
+
+        const averageProcessingTimeMs = Math.round(processingTimes[0]?.avgMs ?? 0);
 
         res.status(200).json({
           statusBreakdown: statusBreakdown.map((s) => ({ status: s._id, count: s.count })),
           volumeTrends: volumeTrends.map((v) => ({ date: v._id, count: v.count, amount: v.amount })),
-          averageProcessingTimeMs: 4250
+          averageProcessingTimeMs
         });
         return;
       } catch (dbErr) {
@@ -146,10 +157,20 @@ dashboardRouter.get("/analytics", async (req: Request, res: Response, next: Next
       dateMap[d].amount += po.totalAmount || 0;
     }
 
+    const completedPOs = tenantPOs.filter((p: any) => p.status === "COMPLETED" && p.createdAt && p.updatedAt);
+    let avgTimeMs = 0;
+    if (completedPOs.length > 0) {
+      const totalDuration = completedPOs.reduce((acc, p: any) => {
+        const diff = new Date(p.updatedAt).getTime() - new Date(p.createdAt).getTime();
+        return acc + Math.max(0, diff);
+      }, 0);
+      avgTimeMs = Math.round(totalDuration / completedPOs.length);
+    }
+
     res.status(200).json({
       statusBreakdown: Object.entries(statusMap).map(([status, count]) => ({ status, count })),
       volumeTrends: Object.entries(dateMap).map(([date, data]) => ({ date, count: data.count, amount: data.amount })),
-      averageProcessingTimeMs: 4250
+      averageProcessingTimeMs: avgTimeMs
     });
   } catch (err) {
     next(err);

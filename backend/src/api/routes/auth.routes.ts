@@ -4,6 +4,7 @@ import { z } from "zod";
 import { UserRepository } from "../../repositories/index.js";
 import { AuthService } from "../../auth/jwt.js";
 import { authenticate } from "../../auth/auth.middleware.js";
+import { authRateLimiter } from "../middleware/rate-limiter.js";
 import { env } from "../../config/env.js";
 import { User } from "../../models/index.js";
 import jwt from "jsonwebtoken";
@@ -19,7 +20,7 @@ const refreshSchema = z.object({
   refreshToken: z.string()
 });
 
-authRouter.post("/login", async (req: Request, res: Response): Promise<void> => {
+authRouter.post("/login", authRateLimiter, async (req: Request, res: Response): Promise<void> => {
   const parse = loginSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({
@@ -133,7 +134,7 @@ authRouter.post("/login", async (req: Request, res: Response): Promise<void> => 
   });
 });
 
-authRouter.post("/refresh", async (req: Request, res: Response): Promise<void> => {
+authRouter.post("/refresh", authRateLimiter, async (req: Request, res: Response): Promise<void> => {
   const parse = refreshSchema.safeParse(req.body);
   if (!parse.success) {
     res.status(400).json({
@@ -219,32 +220,28 @@ authRouter.post("/google", async (req: Request, res: Response): Promise<void> =>
   try {
     let payload: any = null;
 
-    // 1. Try Google tokeninfo endpoint with timeout
     try {
       const verifyUrl = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`;
-      const googleRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(6000) });
+      const googleRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
       if (googleRes.ok) {
         payload = await googleRes.json();
+      } else {
+        res.status(401).json({
+          code: "GOOGLE_AUTH_FAILED",
+          message: "Failed to verify Google ID token with Google OAuth servers",
+          details: {},
+          requestId: req.requestId || ""
+        });
+        return;
       }
-    } catch (networkErr) {
-      // Network fetch failed or timed out; will fall back to decoding Google JWT
-    }
-
-    // 2. Fallback to decoding Google JWT directly if external endpoint fetch failed
-    if (!payload) {
-      try {
-        const decoded = jwt.decode(credential) as any;
-        if (
-          decoded &&
-          (decoded.iss === "https://accounts.google.com" ||
-            decoded.iss === "accounts.google.com" ||
-            decoded.email)
-        ) {
-          payload = decoded;
-        }
-      } catch (decodeErr) {
-        // Continue to payload check
-      }
+    } catch (networkErr: any) {
+      res.status(401).json({
+        code: "GOOGLE_AUTH_FAILED",
+        message: "Failed to verify Google ID token with Google OAuth servers",
+        details: {},
+        requestId: req.requestId || ""
+      });
+      return;
     }
 
     if (!payload) {
@@ -258,8 +255,9 @@ authRouter.post("/google", async (req: Request, res: Response): Promise<void> =>
     }
 
     // Verify audience matches our Google Client ID
-    if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_ID !== "mock-google-client-id") {
-      if (payload.aud && payload.aud !== env.GOOGLE_CLIENT_ID) {
+    const expectedClientId = env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    if (expectedClientId && expectedClientId !== "mock-google-client-id") {
+      if (payload.aud !== expectedClientId) {
         res.status(401).json({
           code: "AUDIENCE_MISMATCH",
           message: "Google token audience does not match configured client ID",

@@ -80,7 +80,8 @@ export class StorageService {
   static async getPresignedDownloadUrl(
     s3Key: string,
     expiresInSeconds = 300,
-    baseUrl?: string
+    baseUrl?: string,
+    token?: string
   ): Promise<{ url: string; expiresAt: string }> {
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
@@ -94,7 +95,10 @@ export class StorageService {
     } else {
       // Use the active server host/protocol (or fallback to port)
       const base = baseUrl || `http://localhost:${env.PORT}`;
-      const url = `${base}${env.API_PREFIX}/storage/download?key=${encodeURIComponent(s3Key)}`;
+      let url = `${base}${env.API_PREFIX}/storage/download?key=${encodeURIComponent(s3Key)}`;
+      if (token) {
+        url += `&token=${encodeURIComponent(token)}`;
+      }
       return { url, expiresAt };
     }
   }

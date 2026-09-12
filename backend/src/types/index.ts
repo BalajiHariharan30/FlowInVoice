@@ -14,7 +14,8 @@ export type POStatus =
   | "INVOICE_GENERATING"
   | "INVOICE_VALIDATING"
   | "COMPLETED"
-  | "FAILED";
+  | "FAILED"
+  | "DELETED";
 
 export type InvoiceStatus =
   | "DRAFT"
@@ -27,9 +28,15 @@ export type InvoiceStatus =
 
 export type ReviewStage = "extraction" | "validation" | "invoice";
 
-export type ReviewStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type ReviewStatus = "PENDING" | "APPROVED" | "REJECTED" | "ESCALATED";
 
 export type ReviewPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export interface SuggestedFix {
+  failurePatternSummary: string;
+  rootCauseCategory: string;
+  recommendedAction: string;
+}
 
 export interface EvidenceItem {
   sourceType: "CONTRACT" | "POLICY";
@@ -62,6 +69,7 @@ export interface PaginationParams {
   dateFrom?: string;
   dateTo?: string;
   sort?: string;
+  latestOnly?: boolean;
 }
 
 export interface PaginatedResult<T> {

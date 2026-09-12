@@ -114,8 +114,8 @@ export function createPOValidationNode(tenantId: string) {
     if (!MoneyUtil.equals(directExpectedTotal, data.totalAmount) && data.lineItems.length > 0) {
       const lineTaxSum = data.lineItems.reduce((acc, item) => {
         const lt = MoneyUtil.from(item.lineTotal);
-        const rate = (item.taxRate || 0) / 100;
-        return acc.plus(lt.times(rate));
+        const rateDecimal = MoneyUtil.from(item.taxRate || 0).dividedBy(100);
+        return acc.plus(lt.times(rateDecimal));
       }, MoneyUtil.from(0));
 
       const lineTaxExpectedTotal = MoneyUtil.calculateTotal(data.subtotal, lineTaxSum, data.discount);

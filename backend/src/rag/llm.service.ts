@@ -50,13 +50,13 @@ export class LLMService {
             tokens: res.tokens
           };
         }
-      } catch (err) {
-        logger.warn({ err }, "AWS Bedrock call failed, falling back to Groq/Mistral");
+      } catch (err: any) {
+        logger.warn({ err: err.message }, "AWS Bedrock call failed, falling back to Mistral");
       }
     }
 
-    // 2. Try Mistral if configured
-    if (env.LLM_PROVIDER === "mistral" && env.MISTRAL_API_KEY) {
+    // 2. Try Mistral if configured (Priority 2)
+    if (env.MISTRAL_API_KEY) {
       try {
         const res = await this.callMistral(messages);
         const parsed = schema.parse(JSON.parse(res.content));
@@ -66,40 +66,24 @@ export class LLMService {
           latencyMs: Date.now() - startTime,
           tokens: res.tokens
         };
-      } catch (err) {
-        logger.warn({ err }, "Mistral call failed, falling back to Groq");
+      } catch (err: any) {
+        logger.warn({ err: err.message }, "Mistral call failed, falling back to Gemini");
       }
     }
 
-    // 2. Try Groq if configured
-    if ((env.LLM_PROVIDER === "groq" || env.LLM_PROVIDER === "mistral") && env.GROQ_API_KEY) {
+    // 3. Try Google Gemini if configured (Priority 3)
+    if (env.GEMINI_API_KEY) {
       try {
-        const res = await this.callGroq(messages);
+        const res = await this.callGemini(messages);
         const parsed = schema.parse(JSON.parse(res.content));
         return {
           data: parsed,
-          model: "openai/gpt-oss-120b",
+          model: "gemini-1.5-flash",
           latencyMs: Date.now() - startTime,
           tokens: res.tokens
         };
-      } catch (err) {
-        logger.warn({ err }, "Groq call failed, falling back to OpenRouter");
-      }
-    }
-
-    // 3. Try OpenRouter if configured
-    if (env.OPENROUTER_API_KEY) {
-      try {
-        const res = await this.callOpenRouter(messages);
-        const parsed = schema.parse(JSON.parse(res.content));
-        return {
-          data: parsed,
-          model: "openrouter/auto",
-          latencyMs: Date.now() - startTime,
-          tokens: res.tokens
-        };
-      } catch (err) {
-        logger.warn({ err }, "OpenRouter call failed, falling back to mock provider");
+      } catch (err: any) {
+        logger.warn({ err: err.message }, "Google Gemini call failed, falling back to mock provider");
       }
     }
 
@@ -236,6 +220,39 @@ export class LLMService {
         promptTokens: res.usage?.inputTokens || 100,
         completionTokens: res.usage?.outputTokens || 50,
         totalTokens: res.usage?.totalTokens || 150
+      }
+    };
+  }
+
+  private static async callGemini(messages: LLMMessage[]): Promise<{ content: string; tokens: any }> {
+    const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
+
+    const prompt = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          response_mime_type: "application/json",
+          temperature: 0.1
+        }
+      })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Gemini API error (HTTP ${res.status}): ${err}`);
+    }
+    const json: any = await res.json();
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    return {
+      content: text,
+      tokens: {
+        promptTokens: json.usageMetadata?.promptTokenCount || 100,
+        completionTokens: json.usageMetadata?.candidatesTokenCount || 50,
+        totalTokens: json.usageMetadata?.totalTokenCount || 150
       }
     };
   }

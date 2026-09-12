@@ -3,8 +3,9 @@ import { asyncHandler } from "../middleware/error-handler.js";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { authenticate } from "../../auth/auth.middleware.js";
-import { PurchaseOrderRepository, AuditRepository } from "../../repositories/index.js";
+import { PurchaseOrderRepository, AuditRepository, ReviewRepository } from "../../repositories/index.js";
 import { StorageService } from "../../storage/s3.service.js";
+import { QdrantService } from "../../rag/qdrant.service.js";
 import { QueueManager } from "../../workers/queue.js";
 import { POStatus } from "../../types/index.js";
 import { runOrchestrationWorkflow } from "../../ai/workflow/graph.js";
@@ -77,6 +78,19 @@ poRouter.post("/", upload.single("file"), async (req: Request, res: Response): P
       ? providedPoNumber
       : `PENDING-${uuidv4().slice(0, 6).toUpperCase()}`;
 
+    // Rule 9: Version tracking on resubmissions
+    const previousVersionId = req.body?.previousVersionId ? String(req.body.previousVersionId).trim() : undefined;
+    let version = 1;
+    if (previousVersionId) {
+      const prevPo = await PurchaseOrderRepository.findById(tenantId, previousVersionId);
+      if (prevPo) {
+        version = (prevPo.version || 1) + 1;
+      }
+    }
+
+    // Rule 5: Record submitter ID for segregation of duties
+    const createdBy = req.user!.id || (req.user as any).userId || req.user!.email;
+
     // Initial PO record creation in database
     const po = await PurchaseOrderRepository.create(tenantId, {
       poNumber,
@@ -88,7 +102,10 @@ poRouter.post("/", upload.single("file"), async (req: Request, res: Response): P
       documentSize: s3Result.sizeBytes,
       contentType: file.mimetype || "application/pdf",
       extractionConfidence: 1.0,
-      lineItems: []
+      lineItems: [],
+      createdBy,
+      previousVersionId,
+      version
     });
 
     const poId = po._id.toString();
@@ -268,7 +285,7 @@ poRouter.get("/:poId/stream-graph", workflowRateLimiter, async (req: Request, re
  */
 poRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void> => {
   const tenantId = req.user!.tenantId;
-  const { page, pageSize, status, search, customerId, dateFrom, dateTo } = req.query;
+  const { page, pageSize, status, search, customerId, dateFrom, dateTo, latestOnly } = req.query;
 
   const result = await PurchaseOrderRepository.findMany(tenantId, {
     page: page ? parseInt(page as string, 10) : 1,
@@ -277,7 +294,8 @@ poRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void
     search: search as string,
     customerId: customerId as string,
     dateFrom: dateFrom as string,
-    dateTo: dateTo as string
+    dateTo: dateTo as string,
+    latestOnly: latestOnly === "false" ? false : true
   });
 
   const formattedData = result.data.map((po) => ({
@@ -298,6 +316,9 @@ poRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void
     lineItemsCount: po.lineItems.length,
     retryCount: po.retryCount,
     failureReason: po.failureReason,
+    version: po.version || 1,
+    previousVersionId: po.previousVersionId,
+    createdBy: po.createdBy,
     createdAt: po.createdAt,
     updatedAt: po.updatedAt
   }));
@@ -307,6 +328,45 @@ poRouter.get("/", asyncHandler(async (req: Request, res: Response): Promise<void
     pagination: result.pagination
   });
 }));
+
+/**
+ * GET /pos/:poId/version-chain
+ * Returns the complete revision timeline for a given PO (ancestors + descendants)
+ */
+poRouter.get("/:poId/version-chain", async (req: Request, res: Response): Promise<void> => {
+  const tenantId = req.user!.tenantId;
+  const poId = req.params.poId as string;
+
+  const chain = await PurchaseOrderRepository.findVersionChain(tenantId, poId);
+  if (chain.length === 0) {
+    res.status(404).json({
+      code: "NOT_FOUND",
+      message: "Purchase order version chain not found",
+      details: { poId },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
+  const formattedChain = chain.map((p) => ({
+    id: p._id.toString(),
+    poNumber: p.poNumber,
+    version: p.version || 1,
+    status: p.status,
+    totalAmount: p.totalAmount,
+    previousVersionId: p.previousVersionId,
+    createdBy: p.createdBy,
+    failureReason: p.failureReason || p.terminationReason,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt
+  }));
+
+  res.status(200).json({
+    data: formattedChain,
+    totalVersions: formattedChain.length,
+    currentVersionId: poId
+  });
+});
 
 /**
  * GET /pos/:poId
@@ -329,7 +389,10 @@ poRouter.get("/:poId", async (req: Request, res: Response): Promise<void> => {
 
   // Get download presigned URL for the original document
   const baseUrl = `${req.protocol}://${req.get("host")}`;
-  const download = await StorageService.getPresignedDownloadUrl(po.s3Key, 300, baseUrl);
+  const userToken = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.split(" ")[1]
+    : undefined;
+  const download = await StorageService.getPresignedDownloadUrl(po.s3Key, 300, baseUrl, userToken);
 
   res.status(200).json({
     id: po._id.toString(),
@@ -353,6 +416,9 @@ poRouter.get("/:poId", async (req: Request, res: Response): Promise<void> => {
     retryCount: po.retryCount,
     failureReason: po.failureReason,
     workflowId: po.workflowId,
+    version: po.version || 1,
+    previousVersionId: po.previousVersionId,
+    createdBy: po.createdBy,
     createdAt: po.createdAt,
     updatedAt: po.updatedAt
   });
@@ -424,4 +490,50 @@ poRouter.post("/:poId/retry", async (req: Request, res: Response): Promise<void>
     jobId,
     status: "PROCESSING"
   });
+});
+
+/**
+ * DELETE /pos/:poId
+ * Soft-deletes a purchase order, marks open review tickets as REJECTED,
+ * prunes associated Qdrant vector chunks, and logs an immutable audit event.
+ */
+poRouter.delete("/:poId", async (req: Request, res: Response): Promise<void> => {
+  const poId = req.params.poId as string;
+  const tenantId = req.user!.tenantId;
+
+  const po = await PurchaseOrderRepository.findById(tenantId, poId);
+  if (!po) {
+    res.status(404).json({
+      code: "NOT_FOUND",
+      message: "Purchase order not found",
+      details: { poId },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
+  // Soft-delete the PO
+  await PurchaseOrderRepository.softDelete(tenantId, poId);
+
+  // Close and reject any open review tickets
+  await ReviewRepository.rejectOpenReviewsForEntity(
+    tenantId,
+    poId,
+    "PO record was deleted by user"
+  );
+
+  // Prune associated Qdrant vector points
+  await QdrantService.deletePointsByFilter(tenantId, { documentId: poId });
+
+  // Immutable audit log
+  await AuditRepository.create(tenantId, {
+    agentName: "PurchaseOrderService",
+    action: "DELETE_PO",
+    status: "SUCCESS",
+    entityId: poId,
+    workflowId: `del_${poId}`,
+    summary: `Purchase order ${po.poNumber} (${poId}) soft-deleted by ${req.user!.email}`
+  });
+
+  res.status(204).send();
 });

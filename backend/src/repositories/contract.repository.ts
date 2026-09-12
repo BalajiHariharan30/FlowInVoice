@@ -35,21 +35,38 @@ export class ContractRepository {
     );
   }
 
-  static async findActiveContracts(tenantId: string, customerId: string): Promise<IContract[]> {
+  static async findByCustomerIds(tenantId: string, customerIds: string[]): Promise<IContract[]> {
+    if (isDbConnected()) {
+      return Contract.find({ tenantId, customerId: { $in: customerIds } }).sort({ effectiveFrom: -1 });
+    }
+    return Array.from(inMemory.contracts.values()).filter(
+      (c) => c.tenantId === tenantId && customerIds.includes(c.customerId)
+    );
+  }
+
+  static async findActiveByCustomerIds(tenantId: string, customerIds: string[]): Promise<IContract[]> {
     const now = new Date();
     if (isDbConnected()) {
       return Contract.find({
-        tenantId, customerId, status: "ACTIVE",
-        effectiveFrom: { $lte: now }, effectiveTo: { $gte: now }
+        tenantId,
+        customerId: { $in: customerIds },
+        status: "ACTIVE",
+        effectiveFrom: { $lte: now },
+        effectiveTo: { $gte: now }
       });
     }
     return Array.from(inMemory.contracts.values()).filter(
       (c) =>
         c.tenantId === tenantId &&
-        c.customerId === customerId &&
+        customerIds.includes(c.customerId) &&
         c.status === "ACTIVE" &&
         new Date(c.effectiveFrom) <= now &&
         new Date(c.effectiveTo) >= now
     );
   }
+
+  static async findActiveContracts(tenantId: string, customerId: string): Promise<IContract[]> {
+    return this.findActiveByCustomerIds(tenantId, [customerId]);
+  }
 }
+

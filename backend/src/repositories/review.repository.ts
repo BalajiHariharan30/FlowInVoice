@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { HumanReview, IHumanReview } from "../models/index.js";
 import { PaginationParams, PaginatedResult, ReviewStatus, ReviewStage } from "../types/index.js";
 import { inMemory, isDbConnected, generateId, calcPagination } from "./base.js";
+import { AuditRepository } from "./audit.repository.js";
 import { logger } from "../utils/logger.js";
 
 /**
@@ -13,7 +14,7 @@ export function computeReviewDedupKey(tenantId: string, data: Partial<IHumanRevi
   if (data.dedupKey && typeof data.dedupKey === "string" && data.dedupKey.trim().length > 0) {
     return data.dedupKey.trim();
   }
-  const entityId = data.entityId || "";
+  const entityId = data.entityId || (data as any).poId || "";
   const entity = data.entity || "purchase_order";
   const stage = data.stage || "validation";
   const agent = data.requestedByAgent || "system";
@@ -197,7 +198,7 @@ export class ReviewRepository {
       tenantId,
       dedupKey,
       evidence: data.evidence || [],
-      createdAt: new Date(),
+      createdAt: (data as any).createdAt ? new Date((data as any).createdAt) : new Date(),
       updatedAt: new Date()
     };
     inMemory.reviews.set(id, doc);
@@ -260,6 +261,38 @@ export class ReviewRepository {
     return { data, pagination: calcPagination(page, pageSize, total) };
   }
 
+  static async rejectOpenReviewsForEntity(
+    tenantId: string,
+    entityId: string,
+    reason: string
+  ): Promise<void> {
+    const resolvedAt = new Date();
+    if (isDbConnected()) {
+      await HumanReview.updateMany(
+        {
+          tenantId,
+          $or: [{ entityId }, { poId: entityId }],
+          status: { $nin: ["APPROVED", "REJECTED"] }
+        },
+        { status: "REJECTED", resolvedAt, resolutionNotes: reason }
+      );
+      return;
+    }
+    for (const doc of inMemory.reviews.values()) {
+      if (
+        doc.tenantId === tenantId &&
+        (doc.entityId === entityId || (doc as any).poId === entityId) &&
+        doc.status !== "APPROVED" &&
+        doc.status !== "REJECTED"
+      ) {
+        doc.status = "REJECTED";
+        doc.resolvedAt = resolvedAt;
+        doc.resolutionNotes = reason;
+        doc.updatedAt = resolvedAt;
+      }
+    }
+  }
+
   static async updateReview(
     tenantId: string,
     id: string,
@@ -307,41 +340,50 @@ export class ReviewRepository {
     if (isDbConnected()) {
       if (!mongoose.isValidObjectId(id)) return null;
       const target = await HumanReview.findOneAndUpdate(
-        { tenantId, _id: id, status: "PENDING" },
+        { tenantId, _id: id, status: { $in: ["PENDING", "ESCALATED"] } },
         { $set: updatePayload },
         { new: true }
       );
 
       if (!target) return null;
 
-      // Approval Propagation Rule: If approved, propagate to ALL other rows sharing the same dedupKey or entityId
+      // Approval Propagation Rule: If approved, propagate ONLY to true duplicates (same dedupKey or same entity+stage+root reason)
       if (status === "APPROVED") {
-        const staleQuery: any = {
-          tenantId,
-          _id: { $ne: target._id },
-          status: "PENDING"
-        };
-        if (target.dedupKey) {
-          staleQuery.$or = [{ dedupKey: target.dedupKey }, { entityId: target.entityId }];
-        } else {
-          staleQuery.entityId = target.entityId;
+        const orConditions: any[] = [];
+        if (target.dedupKey) orConditions.push({ dedupKey: target.dedupKey });
+        if (target.stage && target.reason && target.reason.length >= 10) {
+          const sanitizedPrefix = target.reason.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          orConditions.push({
+            entityId: target.entityId,
+            stage: target.stage,
+            reason: { $regex: new RegExp("^" + sanitizedPrefix, "i") }
+          });
         }
 
-        const staleCount = await HumanReview.countDocuments(staleQuery);
-        if (staleCount > 0) {
-          logger.warn(
-            { tenantId, dedupKey: target.dedupKey, entityId: target.entityId, staleCount },
-            "Stale pending duplicate review item(s) detected during approval. Propagating APPROVED status across all duplicates."
-          );
-          await HumanReview.updateMany(staleQuery, {
-            $set: {
-              status: "APPROVED",
-              resolutionNotes: `Resolved alongside primary review approval (${target._id.toString()})`,
-              resolvedBy,
-              resolvedAt: new Date(),
-              updatedAt: new Date()
-            }
-          });
+        if (orConditions.length > 0) {
+          const staleQuery: any = {
+            tenantId,
+            _id: { $ne: target._id },
+            status: { $in: ["PENDING", "ESCALATED"] },
+            $or: orConditions
+          };
+
+          const staleCount = await HumanReview.countDocuments(staleQuery);
+          if (staleCount > 0) {
+            logger.warn(
+              { tenantId, dedupKey: target.dedupKey, entityId: target.entityId, staleCount },
+              "Stale pending duplicate review item(s) detected during approval. Propagating APPROVED status across exact duplicates."
+            );
+            await HumanReview.updateMany(staleQuery, {
+              $set: {
+                status: "APPROVED",
+                resolutionNotes: `Resolved alongside primary review approval (${target._id.toString()})`,
+                resolvedBy,
+                resolvedAt: new Date(),
+                updatedAt: new Date()
+              }
+            });
+          }
         }
       }
 
@@ -350,18 +392,27 @@ export class ReviewRepository {
 
     // In-Memory Mode
     const doc = inMemory.reviews.get(id);
-    if (!doc || doc.tenantId !== tenantId || doc.status !== "PENDING") return null;
+    if (!doc || doc.tenantId !== tenantId || (doc.status !== "PENDING" && doc.status !== "ESCALATED")) return null;
     Object.assign(doc, updatePayload);
 
     if (status === "APPROVED") {
       let staleCount = 0;
       for (const sibling of inMemory.reviews.values()) {
-        if (
+        const isDuplicate =
           sibling.tenantId === tenantId &&
           sibling._id !== id &&
-          sibling.status === "PENDING" &&
-          ((doc.dedupKey && sibling.dedupKey === doc.dedupKey) || sibling.entityId === doc.entityId)
-        ) {
+          (sibling.status === "PENDING" || sibling.status === "ESCALATED") &&
+          ((doc.dedupKey && sibling.dedupKey === doc.dedupKey) ||
+           (sibling.entityId === doc.entityId &&
+            sibling.stage === doc.stage &&
+            doc.reason &&
+            sibling.reason &&
+            (sibling.reason === doc.reason ||
+             sibling.reason.startsWith(doc.reason) ||
+             doc.reason.startsWith(sibling.reason) ||
+             (doc.reason.length >= 15 && sibling.reason.slice(0, 15) === doc.reason.slice(0, 15)))));
+
+        if (isDuplicate) {
           sibling.status = "APPROVED";
           sibling.resolutionNotes = `Resolved alongside primary review approval (${id})`;
           sibling.resolvedBy = resolvedBy;
@@ -373,12 +424,74 @@ export class ReviewRepository {
       if (staleCount > 0) {
         logger.warn(
           { tenantId, dedupKey: doc.dedupKey, entityId: doc.entityId, staleCount },
-          "Stale pending duplicate in-memory review item(s) detected during approval. Propagating APPROVED status."
+          "Stale pending duplicate in-memory review item(s) detected during approval. Propagating APPROVED status across exact duplicates."
         );
       }
     }
 
     return doc;
+  }
+
+  /**
+   * SLA Monitor: Identifies unresolved review tickets older than threshold (default 24h)
+   * and marks them as ESCALATED without altering final approval/rejection outcome.
+   */
+  static async escalateStaleReviews(
+    tenantId?: string,
+    thresholdHours = 24
+  ): Promise<{ escalatedCount: number; escalatedIds: string[] }> {
+    const cutoffDate = new Date(Date.now() - thresholdHours * 3600 * 1000);
+    const escalatedIds: string[] = [];
+
+    if (isDbConnected()) {
+      const query: any = {
+        status: "PENDING",
+        createdAt: { $lt: cutoffDate }
+      };
+      if (tenantId) query.tenantId = tenantId;
+
+      const staleReviews = await HumanReview.find(query);
+      for (const rev of staleReviews) {
+        rev.status = "ESCALATED";
+        rev.updatedAt = new Date();
+        await rev.save();
+        escalatedIds.push(rev._id.toString());
+
+        await AuditRepository.create(rev.tenantId, {
+          agentName: "SlaMonitor",
+          action: "REVIEW_ESCALATED",
+          status: "EXCEPTION",
+          entityId: rev.entityId,
+          workflowId: "sla_monitor",
+          summary: `Human review (${rev.stage} stage) exceeded ${thresholdHours}h SLA and was marked ESCALATED. Reason: ${rev.reason}`
+        });
+      }
+      return { escalatedCount: escalatedIds.length, escalatedIds };
+    }
+
+    // In-Memory Mode
+    for (const [id, doc] of inMemory.reviews.entries()) {
+      if (
+        (!tenantId || doc.tenantId === tenantId) &&
+        doc.status === "PENDING" &&
+        new Date(doc.createdAt).getTime() < cutoffDate.getTime()
+      ) {
+        doc.status = "ESCALATED";
+        doc.updatedAt = new Date();
+        escalatedIds.push(id);
+
+        await AuditRepository.create(doc.tenantId, {
+          agentName: "SlaMonitor",
+          action: "REVIEW_ESCALATED",
+          status: "EXCEPTION",
+          entityId: doc.entityId,
+          workflowId: "sla_monitor",
+          summary: `Human review (${doc.stage} stage) exceeded ${thresholdHours}h SLA and was marked ESCALATED. Reason: ${doc.reason}`
+        });
+      }
+    }
+
+    return { escalatedCount: escalatedIds.length, escalatedIds };
   }
 
   static async findLatestByEntityId(tenantId: string, entityId: string): Promise<IHumanReview | null> {
@@ -395,17 +508,46 @@ export class ReviewRepository {
     tenantId: string,
     entityId: string,
     keepReviewId?: string,
-    decision: ReviewStatus = "APPROVED"
+    decision: ReviewStatus = "APPROVED",
+    dedupKey?: string
   ): Promise<void> {
+    let keepReview: IHumanReview | null = null;
+    if (keepReviewId) {
+      keepReview = await this.findById(tenantId, keepReviewId);
+      if (keepReview && !dedupKey && keepReview.dedupKey) {
+        dedupKey = keepReview.dedupKey;
+      }
+    }
+
+    const stage = keepReview?.stage;
+    const reason = keepReview?.reason;
+
     if (isDbConnected()) {
-      const query: any = { tenantId, entityId, status: "PENDING" };
+      const orConditions: any[] = [];
+      if (dedupKey) orConditions.push({ dedupKey });
+      if (stage && reason && reason.length >= 10) {
+        const sanitizedPrefix = reason.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        orConditions.push({
+          entityId,
+          stage,
+          reason: { $regex: new RegExp("^" + sanitizedPrefix, "i") }
+        });
+      }
+
+      if (orConditions.length === 0) return;
+
+      const query: any = {
+        tenantId,
+        status: { $in: ["PENDING", "ESCALATED"] },
+        $or: orConditions
+      };
       if (keepReviewId && mongoose.isValidObjectId(keepReviewId)) {
         query._id = { $ne: keepReviewId };
       }
       const count = await HumanReview.countDocuments(query);
       if (count > 0) {
         logger.warn(
-          { tenantId, entityId, keepReviewId, decision, count },
+          { tenantId, entityId, keepReviewId, decision, count, dedupKey },
           `Closing ${count} duplicate pending tickets with decision: ${decision}`
         );
         await HumanReview.updateMany(query, {
@@ -419,9 +561,25 @@ export class ReviewRepository {
       }
       return;
     }
+
     let count = 0;
     for (const r of inMemory.reviews.values()) {
-      if (r.tenantId === tenantId && r.entityId === entityId && r.status === "PENDING" && r._id !== keepReviewId) {
+      const isDuplicate =
+        r.tenantId === tenantId &&
+        r._id !== keepReviewId &&
+        (r.status === "PENDING" || r.status === "ESCALATED") &&
+        ((dedupKey && r.dedupKey === dedupKey) ||
+         (r.entityId === entityId &&
+          stage &&
+          r.stage === stage &&
+          reason &&
+          r.reason &&
+          (r.reason === reason ||
+           r.reason.startsWith(reason) ||
+           reason.startsWith(r.reason) ||
+           (reason.length >= 15 && r.reason.slice(0, 15) === reason.slice(0, 15)))));
+
+      if (isDuplicate) {
         r.status = decision;
         r.resolutionNotes = `Resolved alongside primary review decision (${decision})`;
         r.resolvedAt = new Date();
@@ -431,7 +589,7 @@ export class ReviewRepository {
     }
     if (count > 0) {
       logger.warn(
-        { tenantId, entityId, keepReviewId, decision, count },
+        { tenantId, entityId, keepReviewId, decision, count, dedupKey },
         `Closing ${count} in-memory duplicate pending tickets with decision: ${decision}`
       );
     }
