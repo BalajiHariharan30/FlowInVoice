@@ -256,8 +256,24 @@ export async function runDeterministicWorkflow(
     });
   }
 
-  // ── Build initial state ────────────────────────────────────────────────────
+  // ── Build initial state & hydrate from persisted state if available ────────
+  const persistedState = (await PurchaseOrderRepository.loadPipelineState(tenantId, poId)) as PipelineState | null;
   let state: PipelineState = makeInitialState(tenantId, poId, workflowId, po, isHumanApproved);
+
+  if (persistedState && !(persistedState as any).completed) {
+    state = applyUpdate(state, persistedState);
+    if (isHumanApproved) {
+      state = applyUpdate(state, {
+        validationErrors: [],
+        validationChecks: [],
+        isBusinessException: false,
+        isHumanApproved: true,
+        skipValidation: true,
+        currentStep: "posting",
+        status: "HUMAN_APPROVED"
+      });
+    }
+  }
 
   // Emit initial step event
   if (options?.onStepUpdate) {
@@ -273,15 +289,30 @@ export async function runDeterministicWorkflow(
   await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
 
   // ── Build agent functions (closure-bound to tenantId) ─────────────────────
-  const stages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }> = isHumanApproved
+  const allStages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }> = [
+    { name: "extraction",       fn: createExtractionNode(tenantId) as any },
+    { name: "matching",         fn: createMatchingNode(tenantId) as any },
+    { name: "poValidation",     fn: createPOValidationNode(tenantId) as any },
+    { name: "policyEvaluation", fn: createPolicyEvaluationNode(tenantId) as any },
+    { name: "approvalDecision", fn: createApprovalDecisionNode(tenantId) as any },
+  ];
+
+  let stages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }> = isHumanApproved
     ? [{ name: "posting", fn: createPostingNode(tenantId) as any }]
-    : [
-        { name: "extraction",       fn: createExtractionNode(tenantId) as any },
-        { name: "matching",         fn: createMatchingNode(tenantId) as any },
-        { name: "poValidation",     fn: createPOValidationNode(tenantId) as any },
-        { name: "policyEvaluation", fn: createPolicyEvaluationNode(tenantId) as any },
-        { name: "approvalDecision", fn: createApprovalDecisionNode(tenantId) as any },
-      ];
+    : allStages;
+
+  // Mid-flight recovery: If recovering mid-run from a previously completed step (not exception/completed),
+  // resume at the subsequent stage rather than repeating completed stages.
+  if (!isHumanApproved && persistedState?.currentStep && !persistedState.isBusinessException) {
+    const lastStepIndex = allStages.findIndex((s) => s.name === persistedState.currentStep);
+    if (lastStepIndex >= 0 && lastStepIndex < allStages.length - 1) {
+      logger.info(
+        { tenantId, poId, resumedAfter: persistedState.currentStep, nextStep: allStages[lastStepIndex + 1].name },
+        "DeterministicOrchestrator: Resuming mid-flight execution from persisted state"
+      );
+      stages = allStages.slice(lastStepIndex + 1);
+    }
+  }
 
   // ── Timeout guard ──────────────────────────────────────────────────────────
   const timeoutMs = options?.timeoutMs || Number(process.env.WORKFLOW_TIMEOUT_MS) || 60000;

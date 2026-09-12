@@ -16,8 +16,7 @@ export const inMemory = {
   audits: new Map<string, any>(),
   validations: new Map<string, any>(),
   users: new Map<string, any>(),
-  products: new Map<string, any>(),
-  checkpoints: new Map<string, any>()
+  products: new Map<string, any>()
 };
 
 /** Clears all in-memory stores — call in beforeEach for test isolation. */
@@ -31,7 +30,6 @@ export function clearTestRepositories(): void {
   inMemory.validations.clear();
   inMemory.users.clear();
   inMemory.products.clear();
-  inMemory.checkpoints.clear();
 }
 
 /** Returns true when Mongoose is actively connected to MongoDB. */

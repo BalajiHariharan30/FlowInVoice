@@ -563,43 +563,6 @@ const ProductSchema = new Schema<IProduct>(
 );
 ProductSchema.index({ tenantId: 1, sku: 1 }, { unique: true });
 
-// -------------------------------------------------------------
-// 10. Workflow Checkpoint Model (LangGraph Persistence)
-// -------------------------------------------------------------
-export interface IWorkflowCheckpoint extends Document {
-  tenantId: string;
-  threadId: string;
-  checkpointNs: string;
-  checkpointId: string;
-  parentCheckpointId?: string;
-  checkpoint: any;
-  metadata?: any;
-  newVersions?: any;
-  pendingWrites?: any[];
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-const WorkflowCheckpointSchema = new Schema<IWorkflowCheckpoint>(
-  {
-    tenantId: { type: String, required: true, index: true },
-    threadId: { type: String, required: true, index: true },
-    checkpointNs: { type: String, default: "" },
-    checkpointId: { type: String, required: true },
-    parentCheckpointId: { type: String },
-    checkpoint: { type: Schema.Types.Mixed, required: true },
-    metadata: { type: Schema.Types.Mixed, default: {} },
-    newVersions: { type: Schema.Types.Mixed, default: {} },
-    pendingWrites: { type: [Schema.Types.Mixed], default: [] }
-  },
-  { timestamps: true }
-);
-
-WorkflowCheckpointSchema.index(
-  { tenantId: 1, threadId: 1, checkpointNs: 1, checkpointId: 1 },
-  { unique: true }
-);
-
 // Export Models
 export const Customer = mongoose.model<ICustomer>("Customer", CustomerSchema);
 export const Contract = mongoose.model<IContract>("Contract", ContractSchema);
@@ -610,4 +573,3 @@ export const ValidationResult = mongoose.model<IValidationResult>("ValidationRes
 export const AuditLog = mongoose.model<IAuditLog>("AuditLog", AuditLogSchema);
 export const User = mongoose.model<IUser>("User", UserSchema);
 export const Product = mongoose.model<IProduct>("Product", ProductSchema);
-export const WorkflowCheckpoint = mongoose.model<IWorkflowCheckpoint>("WorkflowCheckpoint", WorkflowCheckpointSchema);
