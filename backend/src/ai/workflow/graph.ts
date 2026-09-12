@@ -72,6 +72,9 @@ export function buildOrchestrationGraph(tenantId: string) {
 
   // Router 2: PO Validation -> Policy or Exception
   const shouldContinueAfterPOValidation = (state: WorkflowState): "policyEvaluation" | "exception" => {
+    if (state.isHumanApproved || state.skipValidation) {
+      return "policyEvaluation";
+    }
     if (
       (state.validationErrors && state.validationErrors.length > 0) ||
       state.isBusinessException
@@ -79,23 +82,20 @@ export function buildOrchestrationGraph(tenantId: string) {
       logger.info({ poId: state.poId, errors: state.validationErrors }, "Router: Routing from PO Validation to Exception");
       return "exception";
     }
-    if (state.isHumanApproved || state.skipValidation) {
-      return "policyEvaluation";
-    }
     return "policyEvaluation";
   };
 
   // Router 3: Approval Decision -> Posting or Exception
   const shouldContinueAfterApproval = (state: WorkflowState): "posting" | "exception" => {
+    if (state.isHumanApproved) {
+      return "posting";
+    }
     if (
       (state.validationErrors && state.validationErrors.length > 0) ||
       state.isBusinessException
     ) {
       logger.info({ poId: state.poId, errors: state.validationErrors }, "Router: Routing from Approval Decision to Exception");
       return "exception";
-    }
-    if (state.isHumanApproved) {
-      return "posting";
     }
     if (state.approvalRequired) {
       logger.info({ poId: state.poId }, "Router: Routing from Approval Decision to Exception");

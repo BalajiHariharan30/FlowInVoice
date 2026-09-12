@@ -73,17 +73,17 @@ export const WorkflowStateAnnotation = Annotation.Root({
 
   // Agent 3: PO Verification & Math checks
   validationChecks: Annotation<WorkflowValidationCheck[]>({
-    reducer: (curr, update) => [...curr, ...update],
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => []
   }),
   validationErrors: Annotation<string[]>({
-    reducer: (curr, update) => [...curr, ...update],
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => []
   }),
 
   // Agent 4: Policy & Contract Evaluation
   evidence: Annotation<EvidenceItem[]>({
-    reducer: (curr, update) => [...curr, ...update],
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => []
   }),
   allowedVariancePct: Annotation<number>({
@@ -91,21 +91,21 @@ export const WorkflowStateAnnotation = Annotation.Root({
     default: () => 10.0
   }),
   policySourceReferences: Annotation<string[]>({
-    reducer: (curr, update) => Array.from(new Set([...curr, ...update])),
+    reducer: (curr, update) => (update !== undefined ? Array.from(new Set([...curr, ...update])) : curr),
     default: () => []
   }),
   noActiveContract: Annotation<boolean>({
-    reducer: (curr, update) => curr || update,
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => false
   }),
   requiresCatalogReview: Annotation<boolean>({
-    reducer: (curr, update) => curr || update,
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => false
   }),
 
   // Agent 5: Approval Decision state
   approvalRequired: Annotation<boolean>({
-    reducer: (curr, update) => curr || update,
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => false
   }),
   approvalReason: Annotation<string | undefined>({
@@ -119,7 +119,7 @@ export const WorkflowStateAnnotation = Annotation.Root({
     default: () => undefined
   }),
   isBusinessException: Annotation<boolean>({
-    reducer: (curr, update) => curr || update,
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => false
   }),
 
@@ -167,11 +167,11 @@ export const WorkflowStateAnnotation = Annotation.Root({
     default: () => undefined
   }),
   isHumanApproved: Annotation<boolean>({
-    reducer: (curr, update) => curr || update,
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => false
   }),
   skipValidation: Annotation<boolean>({
-    reducer: (curr, update) => curr || update,
+    reducer: (curr, update) => (update !== undefined ? update : curr),
     default: () => false
   }),
   resumedFromStep: Annotation<string | undefined>({

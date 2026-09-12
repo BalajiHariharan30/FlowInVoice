@@ -29,7 +29,14 @@ async function bootstrap() {
     await QdrantService.initialize();
 
     // 3. Initialize BullMQ queue & worker
-    await QueueManager.initialize();
+    try {
+      await QueueManager.initialize();
+    } catch (queueErr: any) {
+      if (env.REQUIRE_REDIS) {
+        throw queueErr;
+      }
+      logger.warn({ err: queueErr.message }, "Queue initialization fallback active");
+    }
 
     // 4. Start HTTP Server
     const app = createApp();
@@ -45,8 +52,8 @@ async function bootstrap() {
         DATABASE: isDbConnected() ? "MongoDB Atlas (Live)" : "In-Memory Fallback"
       }, "=== Active Production System Providers ===");
     });
-  } catch (error) {
-    logger.error({ error }, "Failed to start server");
+  } catch (error: any) {
+    logger.error({ err: error, message: error?.message, stack: error?.stack }, "Failed to start server");
     process.exit(1);
   }
 }

@@ -13,7 +13,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: DEPLOY_VERSION
-        value: "1.0.3"
+        value: "2.0.0"
       - key: DOCUMENT_AI_PROVIDER
         value: bedrock
       - key: MODEL_ARN

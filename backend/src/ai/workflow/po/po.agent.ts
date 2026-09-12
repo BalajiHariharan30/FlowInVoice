@@ -33,20 +33,20 @@ export function createPOValidationNode(tenantId: string) {
       state.skipValidation || state.isHumanApproved || po?.status === "HUMAN_APPROVED"
     );
 
-    const data = state.extractedData || (po ? {
+    const data = (po ? {
       poNumber: po.poNumber || "",
       customerName: po.customerName || "",
       gstNumber: po.gstNumber || "",
       currency: po.currency || "INR",
       paymentTerms: po.paymentTerms || "NET_30",
       issueDate: po.issueDate ? new Date(po.issueDate).toISOString().split("T")[0] : new Date().toISOString().split("T")[0],
-      lineItems: po.lineItems || [],
-      subtotal: po.subtotal || 0,
-      tax: po.tax || 0,
-      discount: po.discount || 0,
-      totalAmount: po.totalAmount || 0,
-      confidence: po.extractionConfidence || 1.0
-    } : undefined);
+      lineItems: po.lineItems || state.extractedData?.lineItems || [],
+      subtotal: po.subtotal ?? state.extractedData?.subtotal ?? 0,
+      tax: po.tax ?? state.extractedData?.tax ?? 0,
+      discount: po.discount ?? state.extractedData?.discount ?? 0,
+      totalAmount: po.totalAmount ?? state.extractedData?.totalAmount ?? 0,
+      confidence: po.extractionConfidence ?? state.extractedData?.confidence ?? 1.0
+    } : state.extractedData);
 
     if (!data || !data.lineItems || data.lineItems.length === 0) {
       return {
@@ -57,7 +57,7 @@ export function createPOValidationNode(tenantId: string) {
     }
 
     const checks: WorkflowValidationCheck[] = [];
-    const errors: string[] = [];
+    const errors: string[] = isHumanSignoff ? [] : [...(state.validationErrors || [])];
 
     // Pre-check: Multi-currency consistency check (§Step 4 Remediation)
     const headerCurrency = (data.currency || "INR").trim().toUpperCase();
@@ -70,11 +70,13 @@ export function createPOValidationNode(tenantId: string) {
 
     if (divergentCurrencies.size > 0) {
       const mismatchMsg = `CURRENCY_MISMATCH: Line items declare divergent currencies (${Array.from(divergentCurrencies).join(", ")}) differing from PO header currency (${headerCurrency}). Raw cross-currency summation is rejected.`;
-      errors.push(mismatchMsg);
+      if (!isHumanSignoff) {
+        errors.push(mismatchMsg);
+      }
       checks.push({
         checkName: "CURRENCY_UNIFORMITY_CHECK",
-        passed: false,
-        message: mismatchMsg
+        passed: isHumanSignoff || false,
+        message: isHumanSignoff ? `${mismatchMsg} (Waived by human approval)` : mismatchMsg
       });
     } else {
       checks.push({
@@ -88,22 +90,22 @@ export function createPOValidationNode(tenantId: string) {
     let calcSubtotal = MoneyUtil.from(0);
     for (const item of data.lineItems) {
       const lineMath = MoneyUtil.multiply(item.quantity, item.unitPrice);
-      const isLineValid = MoneyUtil.equals(lineMath, item.lineTotal);
-      if (!isLineValid) {
+      const isLineValid = isHumanSignoff || MoneyUtil.equals(lineMath, item.lineTotal);
+      if (!isLineValid && !isHumanSignoff) {
         errors.push(`Line ${item.lineNumber} math mismatch: ${item.quantity} * ${item.unitPrice} != ${item.lineTotal}`);
       }
       calcSubtotal = calcSubtotal.plus(lineMath);
     }
 
-    const isSubtotalValid = MoneyUtil.equals(calcSubtotal, data.subtotal);
+    const isSubtotalValid = isHumanSignoff || MoneyUtil.equals(calcSubtotal, data.subtotal);
     checks.push({
       checkName: "SUBTOTAL_MATH_CHECK",
       passed: isSubtotalValid,
       message: isSubtotalValid
-        ? "Subtotal matches sum of line items"
+        ? (isHumanSignoff ? "Subtotal math verified / resolved by human review" : "Subtotal matches sum of line items")
         : `Subtotal mismatch: expected ${calcSubtotal.toFixed(2)}, got ${data.subtotal}`
     });
-    if (!isSubtotalValid) {
+    if (!isSubtotalValid && !isHumanSignoff) {
       errors.push(`Subtotal mismatch: expected ${calcSubtotal.toFixed(2)}, got ${data.subtotal}`);
     }
 
@@ -128,15 +130,15 @@ export function createPOValidationNode(tenantId: string) {
     }
 
     const expectedTotal = MoneyUtil.calculateTotal(data.subtotal, effectiveTax, data.discount);
-    const isTotalValid = MoneyUtil.equals(expectedTotal, data.totalAmount);
+    const isTotalValid = isHumanSignoff || MoneyUtil.equals(expectedTotal, data.totalAmount);
     checks.push({
       checkName: "TOTAL_AMOUNT_CHECK",
       passed: isTotalValid,
       message: isTotalValid
-        ? "Total amount verified"
+        ? (isHumanSignoff ? "Total amount verified / resolved by human review" : "Total amount verified")
         : `Total expected ${expectedTotal.toFixed(2)}, got ${data.totalAmount}`
     });
-    if (!isTotalValid) {
+    if (!isTotalValid && !isHumanSignoff) {
       errors.push(`Total mismatch: expected ${expectedTotal.toFixed(2)}, got ${data.totalAmount}`);
     }
 
@@ -169,7 +171,7 @@ export function createPOValidationNode(tenantId: string) {
       }
     }
 
-    const hasErrors = errors.length > 0;
+    const hasErrors = errors.length > 0 || (!isHumanSignoff && Boolean(state.isBusinessException));
 
     await ValidationResultRepository.create(tenantId, {
       poId: state.poId,
@@ -214,8 +216,8 @@ export function createPOValidationNode(tenantId: string) {
 
     return {
       validationChecks: checks,
-      validationErrors: [],
-      isBusinessException: false,
+      validationErrors: isHumanSignoff ? [] : (state.validationErrors || []),
+      isBusinessException: isHumanSignoff ? false : Boolean(state.isBusinessException),
       status: "VALIDATING",
       currentStep: "po_validation"
     };

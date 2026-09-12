@@ -204,6 +204,8 @@ export function createPostingNode(tenantId: string) {
       s3PdfKey: upload.s3Key,
       erpPostingId: erpVoucher.erpPostingId,
       status: "COMPLETED",
+      isBusinessException: false,
+      validationErrors: [],
       currentStep: "posting"
     };
   };
