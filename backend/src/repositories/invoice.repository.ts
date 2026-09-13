@@ -5,9 +5,24 @@ import { inMemory, isDbConnected, generateId, calcPagination } from "./base.js";
 
 export class InvoiceRepository {
   static async create(tenantId: string, data: Partial<IInvoice>): Promise<IInvoice> {
+    if (data.poId) {
+      const existing = await this.findByPoId(tenantId, data.poId);
+      if (existing) {
+        return existing;
+      }
+    }
+
     if (isDbConnected()) {
-      const invoice = new Invoice({ ...data, tenantId });
-      return invoice.save();
+      try {
+        const invoice = new Invoice({ ...data, tenantId });
+        return await invoice.save();
+      } catch (err: any) {
+        if (err.code === 11000 && data.poId) {
+          const existing = await this.findByPoId(tenantId, data.poId);
+          if (existing) return existing;
+        }
+        throw err;
+      }
     }
     const id = generateId();
     const doc: any = {

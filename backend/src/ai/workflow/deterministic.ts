@@ -174,6 +174,62 @@ export const shouldContinueAfterExtraction = (state: WorkflowState): "matching" 
 };
 
 // ---------------------------------------------------------------------------
+// Checkpoint-based Resume Resolver
+// ---------------------------------------------------------------------------
+
+/**
+ * Determines the authoritative stage at which an approved PO must resume.
+ * Strict checkpoint-based resumption:
+ *  - Stopped at extraction -> resumes at matching (extraction ran once and is never repeated)
+ *  - Stopped at matching -> resumes at poValidation
+ *  - Stopped at poValidation -> resumes at policyEvaluation (extraction & matching are never repeated)
+ *  - Stopped at policyEvaluation -> resumes at approvalDecision
+ *  - Stopped at approvalDecision, posting, or invoice -> resumes at posting
+ */
+export function calculateResumeStage(
+  review?: { stage?: string; checkpointStep?: string; requestedByAgent?: string } | null,
+  persistedStep?: string
+): "matching" | "poValidation" | "policyEvaluation" | "approvalDecision" | "posting" {
+  const step =
+    review?.checkpointStep ||
+    persistedStep ||
+    (review?.requestedByAgent?.startsWith("FlowInvoice_")
+      ? review.requestedByAgent.replace(/^FlowInvoice_/, "")
+      : undefined);
+
+  // Case A: Review at extraction stage -> resume from matching (extraction does NOT re-run)
+  if (step === "extraction" || step === "intake" || review?.stage === "extraction") {
+    return "matching";
+  }
+
+  // Review at matching stage -> resume from poValidation
+  if (step === "matching") {
+    return "poValidation";
+  }
+
+  // Case B: Review at poValidation stage -> resume from policyEvaluation (extraction & matching do NOT re-run)
+  if (
+    step === "poValidation" ||
+    step === "po_validation" ||
+    (review?.stage === "validation" && step !== "approvalDecision" && step !== "policyEvaluation")
+  ) {
+    return "policyEvaluation";
+  }
+
+  // Review at policyEvaluation -> resume from approvalDecision
+  if (step === "policyEvaluation") {
+    return "approvalDecision";
+  }
+
+  // Case C: Review at approvalDecision, posting, or invoice validation -> resume from posting
+  if (step === "approvalDecision" || step === "posting" || review?.stage === "invoice") {
+    return "posting";
+  }
+
+  return "posting";
+}
+
+// ---------------------------------------------------------------------------
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
@@ -285,7 +341,7 @@ export async function runDeterministicWorkflow(
     po.status === "HUMAN_APPROVED";
 
   if (isHumanApproved) {
-    logger.info({ tenantId, poId }, "DeterministicOrchestrator: all exceptions approved; updating PO status and proceeding to posting");
+    logger.info({ tenantId, poId }, "DeterministicOrchestrator: all exceptions approved; updating PO status");
     const reconciledTax = reconcileTaxFromLineItems(po.lineItems);
     await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "HUMAN_APPROVED", {
       extractionConfidence: 1.0,
@@ -299,6 +355,10 @@ export async function runDeterministicWorkflow(
   const persistedState = (await PurchaseOrderRepository.loadPipelineState(tenantId, poId)) as PipelineState | null;
   let state: PipelineState = makeInitialState(tenantId, poId, workflowId, po, isHumanApproved);
 
+  const resumeStage = isHumanApproved
+    ? calculateResumeStage(review as any, persistedState?.currentStep)
+    : "intake";
+
   if (persistedState && !(persistedState as any).completed) {
     state = applyUpdate(state, persistedState);
     if (isHumanApproved) {
@@ -308,10 +368,20 @@ export async function runDeterministicWorkflow(
         isBusinessException: false,
         isHumanApproved: true,
         skipValidation: true,
-        currentStep: "posting",
+        currentStep: resumeStage,
         status: "HUMAN_APPROVED"
       });
     }
+  }
+
+  // Sync line items from PO if corrected or reconciled during review
+  if (po.lineItems && po.lineItems.length > 0) {
+    state.extractedData = state.extractedData || {};
+    state.extractedData.lineItems = po.lineItems;
+    if (po.subtotal !== undefined) state.extractedData.subtotal = po.subtotal;
+    if (po.totalAmount !== undefined) state.extractedData.totalAmount = po.totalAmount;
+    if (po.tax !== undefined) state.extractedData.tax = po.tax;
+    if (po.extractionConfidence !== undefined) state.extractedData.confidence = po.extractionConfidence;
   }
 
   // Emit initial step event
@@ -336,13 +406,25 @@ export async function runDeterministicWorkflow(
     { name: "approvalDecision", fn: createApprovalDecisionNode(tenantId) as any },
   ];
 
-  let stages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }> = isHumanApproved
-    ? [{ name: "posting", fn: createPostingNode(tenantId) as any }]
-    : allStages;
+  let stages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }>;
 
-  // Mid-flight recovery: If recovering mid-run from a previously completed step (not exception/completed),
-  // resume at the subsequent stage rather than repeating completed stages.
-  if (!isHumanApproved && persistedState?.currentStep && !persistedState.isBusinessException) {
+  if (isHumanApproved) {
+    logger.info(
+      { tenantId, poId, reviewStage: review?.stage, checkpointStep: (review as any)?.checkpointStep, resumeStage },
+      "DeterministicOrchestrator: Resuming from checkpoint after human review approval"
+    );
+
+    if (resumeStage === "posting") {
+      stages = [{ name: "posting", fn: createPostingNode(tenantId) as any }];
+    } else {
+      const resumeIndex = allStages.findIndex((s) => s.name === resumeStage);
+      if (resumeIndex >= 0) {
+        stages = allStages.slice(resumeIndex);
+      } else {
+        stages = [{ name: "posting", fn: createPostingNode(tenantId) as any }];
+      }
+    }
+  } else if (persistedState?.currentStep && !persistedState.isBusinessException) {
     const lastStepIndex = allStages.findIndex((s) => s.name === persistedState.currentStep);
     if (lastStepIndex >= 0 && lastStepIndex < allStages.length - 1) {
       logger.info(
@@ -350,7 +432,11 @@ export async function runDeterministicWorkflow(
         "DeterministicOrchestrator: Resuming mid-flight execution from persisted state"
       );
       stages = allStages.slice(lastStepIndex + 1);
+    } else {
+      stages = allStages;
     }
+  } else {
+    stages = allStages;
   }
 
   // ── Timeout guard ──────────────────────────────────────────────────────────

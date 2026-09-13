@@ -300,7 +300,7 @@ const InvoiceSchema = new Schema<IInvoice>(
   { timestamps: true }
 );
 InvoiceSchema.index({ tenantId: 1, invoiceNumber: 1 }, { unique: true });
-InvoiceSchema.index({ tenantId: 1, poId: 1 });
+InvoiceSchema.index({ tenantId: 1, poId: 1 }, { unique: true });
 InvoiceSchema.index({ tenantId: 1, status: 1 });
 InvoiceSchema.index({ tenantId: 1, createdAt: -1 });
 
@@ -359,6 +359,7 @@ export interface IHumanReview extends Document {
   entity: "purchase_order" | "invoice";
   entityId: string;
   stage: ReviewStage;
+  checkpointStep?: string;
   status: ReviewStatus;
   priority: ReviewPriority;
   reason: string;
@@ -388,6 +389,7 @@ const HumanReviewSchema = new Schema<IHumanReview>(
     entity: { type: String, enum: ["purchase_order", "invoice"], required: true },
     entityId: { type: String, required: true, index: true },
     stage: { type: String, enum: ["extraction", "validation", "invoice"], required: true, index: true },
+    checkpointStep: { type: String },
     status: { type: String, enum: ["PENDING", "APPROVED", "REJECTED", "ESCALATED"], default: "PENDING", index: true },
     priority: { type: String, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"], default: "MEDIUM" },
     reason: { type: String, required: true },

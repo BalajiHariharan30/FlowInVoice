@@ -12,6 +12,7 @@ import {
 import { QdrantService } from "../src/rag/qdrant.service.js";
 import { QueueManager } from "../src/workers/queue.js";
 import { isValidPOTransition } from "../src/ai/workflow/workflow-state-machine.js";
+import { runOrchestrationWorkflow } from "../src/ai/workflow/graph.js";
 
 function generateAuthToken(tenantId: string, role: any = "ADMIN"): string {
   return AuthService.generateTokens({
@@ -483,5 +484,289 @@ describe("Workflow Loop, State, Queue & Agent Remediation Test Suite", () => {
     expect(validUpdate).not.toBeNull();
     expect(validUpdate?.status).toBe("DELETED");
     expect(validUpdate?.version).toBeGreaterThan(initialVersion);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 8. True Checkpoint Resume - Case A: Extraction Checkpoint
+  // ──────────────────────────────────────────────────────────────────────────
+  it("8. Case A: Extraction Checkpoint Resume: Extraction executes exactly once; approval resumes at matching", async () => {
+    // Seed product so downstream line matching passes
+    await ProductRepository.create(tenantId, {
+      sku: "SKU-CASE-A",
+      name: "Widget A",
+      basePrice: 500.0
+    });
+
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-CASE-A-001",
+      customerName: "Case A Client",
+      status: "PROCESSING",
+      extractionConfidence: 0.5, // low confidence pauses at extraction
+      lineItems: [
+        { lineNumber: 1, productCode: "SKU-CASE-A", description: "Widget A", quantity: 2, unitPrice: 500.0, lineTotal: 1000.0, taxRate: 18.0 }
+      ],
+      subtotal: 1000.0,
+      tax: 180.0,
+      totalAmount: 1180.0
+    });
+    const poId = po._id.toString();
+
+    // Initial run: executes extraction -> routes to exception
+    const run1Steps: string[] = [];
+    const run1Result = await runOrchestrationWorkflow(tenantId, poId, {
+      onStepUpdate: (evt) => run1Steps.push(evt.step)
+    });
+
+    expect(run1Result.status).toBe("HUMAN_REVIEW");
+    expect(run1Steps).toContain("extraction");
+    expect(run1Steps).toContain("exception");
+    expect(run1Steps).not.toContain("matching");
+
+    // Reviewer approves the extraction ticket
+    const reviews = await ReviewRepository.findByEntityId(tenantId, poId);
+    expect(reviews.length).toBeGreaterThanOrEqual(1);
+    const targetReview = reviews[0];
+    expect(targetReview.stage).toBe("extraction");
+
+    const approveRes = await request(app)
+      .post(`/api/v1/reviews/${targetReview._id.toString()}/approve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ resolutionNotes: "Verified low confidence text" });
+    expect(approveRes.status).toBe(200);
+
+    // Resumed run: must resume at MATCHING and NOT re-run extraction!
+    const resumeSteps: string[] = [];
+    const resumeResult = await runOrchestrationWorkflow(tenantId, poId, {
+      onStepUpdate: (evt) => resumeSteps.push(evt.step)
+    }, targetReview._id.toString());
+
+    expect(resumeResult.status).toBe("COMPLETED");
+    // Extraction must NOT execute on resume!
+    expect(resumeSteps).not.toContain("extraction");
+    // Matching and downstream stages MUST execute!
+    expect(resumeSteps).toContain("matching");
+    expect(resumeSteps).toContain("poValidation");
+    expect(resumeSteps).toContain("posting");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 9. True Checkpoint Resume - Case B: Validation Checkpoint
+  // ──────────────────────────────────────────────────────────────────────────
+  it("9. Case B: Validation Checkpoint Resume: Extraction & matching do NOT re-run; approval resumes at policy", async () => {
+    // Product in catalog with price = 1000, but PO has 1500 (+50% variance, triggers validation exception)
+    await ProductRepository.create(tenantId, {
+      sku: "SKU-CASE-B",
+      name: "Widget B",
+      basePrice: 1000.0
+    });
+
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-CASE-B-001",
+      customerName: "Case B Client",
+      status: "PROCESSING",
+      extractionConfidence: 0.99, // high confidence so extraction passes
+      lineItems: [
+        { lineNumber: 1, productCode: "SKU-CASE-B", description: "Widget B", quantity: 1, unitPrice: 1500.0, lineTotal: 1500.0, taxRate: 18.0 }
+      ],
+      subtotal: 1500.0,
+      tax: 270.0,
+      totalAmount: 1770.0
+    });
+    const poId = po._id.toString();
+
+    // Initial run: extraction and matching pass, but policy/approval variance triggers exception
+    const run1Steps: string[] = [];
+    const run1Result = await runOrchestrationWorkflow(tenantId, poId, {
+      onStepUpdate: (evt) => run1Steps.push(evt.step)
+    });
+
+    expect(run1Result.status).toBe("HUMAN_REVIEW");
+    expect(run1Steps).toContain("extraction");
+    expect(run1Steps).toContain("matching");
+
+    const reviews = await ReviewRepository.findByEntityId(tenantId, poId);
+    expect(reviews.length).toBeGreaterThanOrEqual(1);
+    const targetReview = reviews[0];
+
+    const approveRes = await request(app)
+      .post(`/api/v1/reviews/${targetReview._id.toString()}/approve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ resolutionNotes: "Price variance of 50% approved by finance" });
+    expect(approveRes.status).toBe(200);
+
+    // Resumed run: must NOT re-run extraction or matching!
+    const resumeSteps: string[] = [];
+    const resumeResult = await runOrchestrationWorkflow(tenantId, poId, {
+      onStepUpdate: (evt) => resumeSteps.push(evt.step)
+    }, targetReview._id.toString());
+
+    expect(resumeResult.status).toBe("COMPLETED");
+    expect(resumeSteps).not.toContain("extraction");
+    expect(resumeSteps).not.toContain("matching");
+    expect(resumeSteps).toContain("posting");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 10. True Checkpoint Resume - Case C: Invoice / Posting Checkpoint
+  // ──────────────────────────────────────────────────────────────────────────
+  it("10. Case C: Invoice Checkpoint Resume: Earlier stages do NOT re-run; resumes at posting", async () => {
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-CASE-C-001",
+      customerName: "Case C Client",
+      status: "HUMAN_APPROVED",
+      extractionConfidence: 1.0,
+      lineItems: [
+        { lineNumber: 1, productCode: "SKU-CASE-C", description: "Widget C", quantity: 1, unitPrice: 300.0, lineTotal: 300.0, taxRate: 18.0 }
+      ],
+      subtotal: 300.0,
+      tax: 54.0,
+      totalAmount: 354.0
+    });
+    const poId = po._id.toString();
+
+    // Create review ticket at stage: invoice
+    const review = await ReviewRepository.create(tenantId, {
+      entity: "purchase_order",
+      entityId: poId,
+      stage: "invoice",
+      checkpointStep: "posting",
+      status: "APPROVED",
+      priority: "HIGH",
+      reason: "Invoice arithmetic check approved by accountant",
+      requestedByAgent: "PostingAgent"
+    });
+
+    // Save pipeline state at posting step
+    await PurchaseOrderRepository.savePipelineState(tenantId, poId, {
+      tenantId,
+      poId,
+      workflowId: "wf_case_c",
+      currentStep: "posting",
+      status: "HUMAN_APPROVED",
+      validationErrors: []
+    });
+
+    const resumeSteps: string[] = [];
+    const resumeResult = await runOrchestrationWorkflow(tenantId, poId, {
+      onStepUpdate: (evt) => resumeSteps.push(evt.step)
+    }, review._id.toString());
+
+    expect(resumeResult.status).toBe("COMPLETED");
+    expect(resumeSteps).not.toContain("extraction");
+    expect(resumeSteps).not.toContain("matching");
+    expect(resumeSteps).not.toContain("poValidation");
+    expect(resumeSteps).toContain("posting");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 11. Concurrent Approve & Reject: Exactly One Transition Wins
+  // ──────────────────────────────────────────────────────────────────────────
+  it("11. Concurrent Approve & Reject: exactly one decision succeeds, mutual exclusion enforced", async () => {
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-CONCURRENT-DECISION-01",
+      customerName: "Race Client",
+      status: "HUMAN_REVIEW",
+      subtotal: 100.0,
+      totalAmount: 100.0,
+      lineItems: []
+    });
+
+    const review = await ReviewRepository.create(tenantId, {
+      entity: "purchase_order",
+      entityId: po._id.toString(),
+      stage: "validation",
+      status: "PENDING",
+      priority: "HIGH",
+      reason: "Race test review",
+      requestedByAgent: "ValidationAgent"
+    });
+    const reviewId = review._id.toString();
+
+    // Fire approve() and reject() concurrently
+    const [approveRes, rejectRes] = await Promise.all([
+      request(app)
+        .post(`/api/v1/reviews/${reviewId}/approve`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ resolutionNotes: "Race approve" }),
+      request(app)
+        .post(`/api/v1/reviews/${reviewId}/reject`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ reason: "Race reject" })
+    ]);
+
+    const statuses = [approveRes.status, rejectRes.status];
+    // Exactly one must succeed (200) and the other must be rejected with 409 Conflict
+    expect(statuses).toContain(200);
+    expect(statuses).toContain(409);
+
+    // Verify the review has an immutable final status
+    const finalizedReview = await ReviewRepository.findById(tenantId, reviewId);
+    expect(["APPROVED", "REJECTED"]).toContain(finalizedReview?.status);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 12. Stale Worker Optimistic Concurrency Protection
+  // ──────────────────────────────────────────────────────────────────────────
+  it("12. Stale Worker Protection: updateStatus rejects stale expectedVersion", async () => {
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-STALE-WORKER-01",
+      customerName: "Stale Worker Corp",
+      status: "PROCESSING",
+      version: 1,
+      subtotal: 100.0,
+      totalAmount: 100.0,
+      lineItems: []
+    });
+    const poId = po._id.toString();
+
+    // Worker B advances document to HUMAN_REVIEW, bumping version to 2
+    const advanced = await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "HUMAN_REVIEW");
+    expect(advanced?.version).toBe(2);
+
+    // Stale Worker A attempts to write using old expectedVersion: 1
+    const staleUpdate = await PurchaseOrderRepository.updateStatus(
+      tenantId,
+      poId,
+      "VALIDATING",
+      undefined,
+      false,
+      1 // Stale expectedVersion
+    );
+
+    // Must be rejected
+    expect(staleUpdate).toBeNull();
+
+    // Status remains HUMAN_REVIEW
+    const current = await PurchaseOrderRepository.findById(tenantId, poId);
+    expect(current?.status).toBe("HUMAN_REVIEW");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 13. Queue Deduplication (Multiple rapid enqueues)
+  // ──────────────────────────────────────────────────────────────────────────
+  it("13. Queue Deduplication: rapid concurrent enqueue calls merge into a single active execution", async () => {
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-QUEUE-DEDUP-01",
+      customerName: "Dedup Corp",
+      status: "UPLOADED",
+      subtotal: 100.0,
+      totalAmount: 100.0,
+      lineItems: []
+    });
+    const poId = po._id.toString();
+
+    // Fire 4 enqueue calls in parallel for the exact same PO
+    const jobIds = await Promise.all([
+      QueueManager.addPOProcessingJob(tenantId, poId),
+      QueueManager.addPOProcessingJob(tenantId, poId),
+      QueueManager.addPOProcessingJob(tenantId, poId),
+      QueueManager.addPOProcessingJob(tenantId, poId)
+    ]);
+
+    // All jobIds are identical deterministic IDs
+    expect(jobIds[0]).toBe(`po-process-${tenantId}-${poId}`);
+    expect(jobIds[1]).toBe(jobIds[0]);
+    expect(jobIds[2]).toBe(jobIds[0]);
+    expect(jobIds[3]).toBe(jobIds[0]);
   });
 });

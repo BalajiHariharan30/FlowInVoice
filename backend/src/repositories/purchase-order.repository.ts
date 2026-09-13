@@ -103,7 +103,8 @@ export class PurchaseOrderRepository {
     id: string,
     status: POStatus,
     failureReason?: string,
-    force = false
+    force = false,
+    expectedVersion?: number
   ): Promise<IPurchaseOrder | null> {
     const allowedPreceding = getAllowedPrecedingStatuses(status);
 
@@ -112,6 +113,9 @@ export class PurchaseOrderRepository {
       const query: any = { tenantId, _id: id };
       if (!force) {
         query.status = { $in: allowedPreceding };
+      }
+      if (expectedVersion !== undefined) {
+        query.version = expectedVersion;
       }
       const update: any = {
         $set: {
@@ -126,8 +130,8 @@ export class PurchaseOrderRepository {
         const current = await PurchaseOrder.findOne({ tenantId, _id: id });
         if (current) {
           logger.warn(
-            { tenantId, id, currentStatus: current.status, targetStatus: status },
-            "State Machine: Blocked illegal transition on PurchaseOrder"
+            { tenantId, id, currentStatus: current.status, targetStatus: status, currentVersion: current.version, expectedVersion },
+            "State Machine: Blocked transition on PurchaseOrder (preceding status mismatch or stale version)"
           );
         }
       }
@@ -135,6 +139,13 @@ export class PurchaseOrderRepository {
     }
     const doc = inMemory.pos.get(id);
     if (!doc || doc.tenantId !== tenantId) return null;
+    if (expectedVersion !== undefined && doc.version !== expectedVersion) {
+      logger.warn(
+        { tenantId, id, currentVersion: doc.version, expectedVersion },
+        "State Machine (in-memory): Stale worker update rejected due to version mismatch"
+      );
+      return null;
+    }
     if (!force && !isValidPOTransition(doc.status, status)) {
       logger.warn(
         { tenantId, id, currentStatus: doc.status, targetStatus: status },
@@ -162,7 +173,8 @@ export class PurchaseOrderRepository {
       extractionConfidence?: number;
       tax?: number;
     } = {},
-    force = false
+    force = false,
+    expectedVersion?: number
   ): Promise<IPurchaseOrder | null> {
     const allowedPreceding = getAllowedPrecedingStatuses(status);
     const updatePayload: any = { status, ...extra, updatedAt: new Date() };
@@ -173,6 +185,9 @@ export class PurchaseOrderRepository {
       if (!force) {
         query.status = { $in: allowedPreceding };
       }
+      if (expectedVersion !== undefined) {
+        query.version = expectedVersion;
+      }
       const result = await PurchaseOrder.findOneAndUpdate(
         query,
         { $set: updatePayload, $inc: { version: 1 } },
@@ -182,8 +197,8 @@ export class PurchaseOrderRepository {
         const current = await PurchaseOrder.findOne({ tenantId, _id: id });
         if (current) {
           logger.warn(
-            { tenantId, id, currentStatus: current.status, targetStatus: status },
-            "State Machine: Blocked illegal transition on PurchaseOrder in updateHumanReviewStatus"
+            { tenantId, id, currentStatus: current.status, targetStatus: status, currentVersion: current.version, expectedVersion },
+            "State Machine: Blocked transition on PurchaseOrder in updateHumanReviewStatus (preceding status mismatch or stale version)"
           );
         }
       }
@@ -191,6 +206,13 @@ export class PurchaseOrderRepository {
     }
     const doc = inMemory.pos.get(id);
     if (!doc || doc.tenantId !== tenantId) return null;
+    if (expectedVersion !== undefined && doc.version !== expectedVersion) {
+      logger.warn(
+        { tenantId, id, currentVersion: doc.version, expectedVersion },
+        "State Machine (in-memory): Stale worker update rejected in updateHumanReviewStatus due to version mismatch"
+      );
+      return null;
+    }
     if (!force && !isValidPOTransition(doc.status, status)) {
       logger.warn(
         { tenantId, id, currentStatus: doc.status, targetStatus: status },

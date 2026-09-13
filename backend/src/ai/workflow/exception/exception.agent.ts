@@ -87,10 +87,12 @@ export function createExceptionNode(tenantId: string) {
 
     // Determine review stage based on current step
     let stage: ReviewStage = "validation";
-    if (state.currentStep === "extraction" || state.currentStep === "po_validation") {
+    if (state.currentStep === "extraction" || state.currentStep === "intake") {
       stage = "extraction";
-    } else if (state.currentStep === "posting") {
+    } else if (state.currentStep === "posting" || state.currentStep === "invoice_gen" || state.currentStep === "invoice_verif") {
       stage = "invoice";
+    } else {
+      stage = "validation";
     }
 
     const previousReviews = await ReviewRepository.findByEntityId(tenantId, state.poId);
@@ -168,6 +170,7 @@ export function createExceptionNode(tenantId: string) {
         reason,
         priority,
         stage,
+        checkpointStep: state.currentStep,
         actualValue: reason,
         evidence: mergedEvidence,
         ...(suggestedFix ? { suggestedFix } : {})
@@ -183,6 +186,7 @@ export function createExceptionNode(tenantId: string) {
           entity: "purchase_order",
           entityId: state.poId,
           stage,
+          checkpointStep: state.currentStep,
           status: "PENDING",
           priority,
           reason,
