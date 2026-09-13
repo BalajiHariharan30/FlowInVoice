@@ -93,32 +93,36 @@ export function createExceptionNode(tenantId: string) {
       stage = "invoice";
     }
 
+    const previousReviews = await ReviewRepository.findByEntityId(tenantId, state.poId);
+    const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
+    const totalErrorCount = previousReviews.length + (po?.retryCount || 0) + (state.validationErrors?.length || 1);
+    const flagCount = state.validationErrors?.length || 0;
+    const isMultiFlagException = flagCount > 3 || totalErrorCount >= 3;
+
     const isCritical =
+      isMultiFlagException ||
       reason.toLowerCase().includes("duplicate") ||
       reason.toLowerCase().includes("math mismatch");
     const priority: ReviewPriority = isCritical ? "CRITICAL" : "HIGH";
 
-    // Rule 4: Once a PO accumulates >= 3 errors/exceptions, generate a structured suggestedFix diagnosis
-    const previousReviews = await ReviewRepository.findByEntityId(tenantId, state.poId);
-    const po = await PurchaseOrderRepository.findById(tenantId, state.poId);
-    const totalErrorCount = previousReviews.length + (po?.retryCount || 0) + (state.validationErrors?.length || 1);
-
+    // Section 10: Once a PO accumulates >= 3 errors or > 3 validation flags, generate a structured suggestedFix diagnosis
     let suggestedFix: any = undefined;
-    if (totalErrorCount >= 3 || previousReviews.length >= 2 || (po?.retryCount || 0) >= 2) {
+    if (isMultiFlagException || previousReviews.length >= 2 || (po?.retryCount || 0) >= 2) {
       suggestedFix = generateDiagnosis(reason, totalErrorCount, state.validationErrors || []);
       logger.info(
-        { tenantId, poId: state.poId, rootCauseCategory: suggestedFix.rootCauseCategory },
-        "ExceptionAgent: Generated structured suggestedFix diagnosis for repeated exceptions"
+        { tenantId, poId: state.poId, rootCauseCategory: suggestedFix.rootCauseCategory, flagCount },
+        "ExceptionAgent: Generated structured suggestedFix diagnosis for multi-flag or repeated exceptions"
       );
     }
-    // Bug 4 Protection: Check if an approved review ticket already exists for this PO
-    const existingApproved = previousReviews.find(
-      (r) => r.status === "APPROVED" && (r.stage === stage || r.reason === reason || !stage)
-    );
-    if (existingApproved || state.isHumanApproved || po?.status === "HUMAN_APPROVED") {
+
+    // Bug 4 / Anti-Resurrection Protection: If human approval was ALREADY granted for this PO,
+    // do NOT create any secondary review ticket across any stage. Force-resume directly to posting.
+    const hasAnyApprovedReview = previousReviews.some((r) => r.status === "APPROVED");
+    if (hasAnyApprovedReview || state.isHumanApproved || po?.status === "HUMAN_APPROVED") {
+      const existingApproved = previousReviews.find((r) => r.status === "APPROVED");
       logger.warn(
         { tenantId, poId: state.poId, reason, approvedReviewId: existingApproved?._id?.toString() },
-        "DUPLICATE_EXCEPTION_AFTER_APPROVAL — possible state bug: PO already has an approved review ticket. Bypassing duplicate ticket creation and force-resuming workflow to posting."
+        "ANTI_RESURRECTION: PO already has an approved review ticket or HUMAN_APPROVED status. Bypassing duplicate review creation and force-resuming workflow to posting."
       );
       await AuditRepository.create(tenantId, {
         agentName: "ExceptionAgent",
@@ -127,7 +131,7 @@ export function createExceptionNode(tenantId: string) {
         entityId: state.poId,
         workflowId: state.workflowId,
         latency: Date.now() - startTime,
-        summary: `DUPLICATE_EXCEPTION_AFTER_APPROVAL — possible state bug: Bypassed duplicate review ticket creation for already-approved PO (${state.poId}). Resuming to posting.`
+        summary: `ANTI_RESURRECTION: Bypassed duplicate review ticket creation for already-approved PO (${state.poId}). Resuming to posting.`
       });
       return {
         isBusinessException: false,

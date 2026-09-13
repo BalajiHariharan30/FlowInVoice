@@ -131,6 +131,32 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     }
   }
 
+  if (review.status === "APPROVED") {
+    res.status(200).json({
+      id: review._id.toString(),
+      entity: review.entity,
+      entityId: review.entityId,
+      stage: review.stage,
+      status: review.status,
+      resolutionNotes: review.resolutionNotes,
+      resolvedBy: review.resolvedBy,
+      resolvedAt: review.resolvedAt,
+      remainingOpenReviewsCount: 0,
+      message: "Review is already approved."
+    });
+    return;
+  }
+
+  if (review.status === "REJECTED") {
+    res.status(409).json({
+      code: "CANNOT_APPROVE_REJECTED_REVIEW",
+      message: "Cannot approve a review that has already been rejected",
+      details: { currentStatus: review.status },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
   if (review.status !== "PENDING" && review.status !== "ESCALATED") {
     res.status(400).json({
       code: "ALREADY_RESOLVED",
@@ -156,6 +182,32 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     resolutionNotes || "Approved by human reviewer",
     req.user!.email
   );
+
+  if (!resolved) {
+    const latest = await ReviewRepository.findById(tenantId, reviewId);
+    if (latest?.status === "APPROVED") {
+      res.status(200).json({
+        id: latest._id.toString(),
+        entity: latest.entity,
+        entityId: latest.entityId,
+        stage: latest.stage,
+        status: latest.status,
+        resolutionNotes: latest.resolutionNotes,
+        resolvedBy: latest.resolvedBy,
+        resolvedAt: latest.resolvedAt,
+        remainingOpenReviewsCount: 0,
+        message: "Review already approved by concurrent operation."
+      });
+      return;
+    }
+    res.status(409).json({
+      code: "REVIEW_STATE_CONFLICT",
+      message: `Review was resolved concurrently with status: ${latest?.status || "UNKNOWN"}`,
+      details: { currentStatus: latest?.status },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
 
   // Close duplicate pending tickets sharing the same dedupKey
   await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
@@ -328,6 +380,32 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     }
   }
 
+  if (review.status === "REJECTED") {
+    res.status(200).json({
+      id: review._id.toString(),
+      entity: review.entity,
+      entityId: review.entityId,
+      stage: review.stage,
+      status: review.status,
+      resolutionNotes: review.resolutionNotes,
+      resolvedBy: review.resolvedBy,
+      resolvedAt: review.resolvedAt,
+      discrepancyReport: review.discrepancyReport || [],
+      message: "Review is already rejected."
+    });
+    return;
+  }
+
+  if (review.status === "APPROVED") {
+    res.status(409).json({
+      code: "CANNOT_REJECT_APPROVED_REVIEW",
+      message: "Cannot reject a review that has already been approved",
+      details: { currentStatus: review.status },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
   if (review.status !== "PENDING" && review.status !== "ESCALATED") {
     res.status(400).json({
       code: "ALREADY_RESOLVED",
@@ -342,9 +420,11 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
   if (review.entity === "purchase_order") {
     const reanalysis = await ReanalysisService.reanalyzePurchaseOrder(tenantId, review.entityId);
 
-    // Case A: If ZERO discrepancies remain within tolerance -> DO NOT auto-reject!
-    // Route back to Human Review with note "resolved on re-check" for confirmation.
-    if (reanalysis.discrepancies.length === 0) {
+    // Case A: If ZERO discrepancies remain within tolerance -> route back for confirmation UNLESS confirmation was already requested or confirmed by user
+    const isAlreadyAwaitingConfirmation = Boolean(review.resolutionNotes?.includes("confirmation required"));
+    const isExplicitlyConfirmed = req.body?.confirmed === true || req.body?.force === true;
+
+    if (reanalysis.discrepancies.length === 0 && !isAlreadyAwaitingConfirmation && !isExplicitlyConfirmed) {
       const resolutionNotes =
         "Resolved on re-check. No discrepancies found within tolerance; confirmation required.";
       const updated = await ReviewRepository.updateReview(tenantId, review._id.toString(), {
@@ -376,7 +456,7 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Case B: Discrepancies exist! Collect all discrepancies into structured DiscrepancyReport
+    // Case B: Discrepancies exist (or rejection confirmed): Collect all discrepancies into structured DiscrepancyReport
     // Persist report to HumanReview record & AuditTrail, mark review REJECTED and PO REJECTED.
     const combinedEvidence = [...(review.evidence || []), ...reanalysis.evidence];
     const resolved = await ReviewRepository.resolveReview(
@@ -391,6 +471,32 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
         rejectionReason: reason
       }
     );
+
+    if (!resolved) {
+      const latest = await ReviewRepository.findById(tenantId, reviewId);
+      if (latest?.status === "REJECTED") {
+        res.status(200).json({
+          id: latest._id.toString(),
+          entity: latest.entity,
+          entityId: latest.entityId,
+          stage: latest.stage,
+          status: latest.status,
+          resolutionNotes: latest.resolutionNotes,
+          resolvedBy: latest.resolvedBy,
+          resolvedAt: latest.resolvedAt,
+          discrepancyReport: latest.discrepancyReport || [],
+          message: "Review already rejected by concurrent operation."
+        });
+        return;
+      }
+      res.status(409).json({
+        code: "REVIEW_STATE_CONFLICT",
+        message: `Review was resolved concurrently with status: ${latest?.status || "UNKNOWN"}`,
+        details: { currentStatus: latest?.status },
+        requestId: req.requestId || ""
+      });
+      return;
+    }
 
     // Cascade rejection to all open reviews for this entity
     await ReviewRepository.rejectOpenReviewsForEntity(

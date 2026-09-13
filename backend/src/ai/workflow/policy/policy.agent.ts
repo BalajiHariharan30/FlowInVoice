@@ -49,6 +49,7 @@ export function createPolicyEvaluationNode(tenantId: string) {
     const checks: any[] = [];
     const sourceReferences: string[] = [];
     let toolCallCount = 0;
+    const toolCallCache = new Map<string, EvidenceItem[]>();
 
     for (const item of matchedItems) {
       // If price matches catalog exactly, record pass
@@ -66,13 +67,22 @@ export function createPolicyEvaluationNode(tenantId: string) {
 
       let noActiveContract = false;
       if (toolCallCount < MAX_POLICY_TOOL_CALLS && state.customerId) {
-        toolCallCount++;
-        const contractClauses = await AgentTools.searchContractClauses(
-          tenantId,
-          state.customerId,
-          `negotiated price discount tier for ${item.productCode} or ${item.description}`,
-          state.extractedData?.issueDate
-        );
+        const contractQuery = `negotiated price discount tier for ${item.productCode} or ${item.description}`;
+        const cacheKey = `contract:${state.customerId}:${contractQuery}`;
+        let contractClauses: EvidenceItem[];
+
+        if (toolCallCache.has(cacheKey)) {
+          contractClauses = toolCallCache.get(cacheKey)!;
+        } else {
+          toolCallCount++;
+          contractClauses = await AgentTools.searchContractClauses(
+            tenantId,
+            state.customerId,
+            contractQuery,
+            state.extractedData?.issueDate
+          );
+          toolCallCache.set(cacheKey, contractClauses);
+        }
 
         if (contractClauses && contractClauses.length > 0) {
           evidenceList.push(...contractClauses);
@@ -94,11 +104,17 @@ export function createPolicyEvaluationNode(tenantId: string) {
       await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "COMPLIANCE_CHECKING");
 
       if (toolCallCount < MAX_POLICY_TOOL_CALLS) {
-        toolCallCount++;
-        const policyClauses = await AgentTools.searchPolicyClauses(
-          tenantId,
-          "pricing variance tolerance approval limit for purchase orders"
-        );
+        const policyQuery = "pricing variance tolerance approval limit for purchase orders";
+        const cacheKey = `policy:${policyQuery}`;
+        let policyClauses: EvidenceItem[];
+
+        if (toolCallCache.has(cacheKey)) {
+          policyClauses = toolCallCache.get(cacheKey)!;
+        } else {
+          toolCallCount++;
+          policyClauses = await AgentTools.searchPolicyClauses(tenantId, policyQuery);
+          toolCallCache.set(cacheKey, policyClauses);
+        }
 
         if (policyClauses && policyClauses.length > 0) {
           evidenceList.push(...policyClauses);

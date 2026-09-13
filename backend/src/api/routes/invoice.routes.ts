@@ -118,8 +118,38 @@ invoiceRouter.post("/:poId/generate", async (req: Request, res: Response): Promi
     return;
   }
 
-  // Trigger invoice generation step in workflow
-  await PurchaseOrderRepository.updateStatus(tenantId, po._id.toString(), "APPROVED");
+  // Section 23: Duplicate Invoice Protection
+  const existingInvoice = await InvoiceRepository.findByPoId(tenantId, po._id.toString());
+  if (existingInvoice) {
+    res.status(200).json({
+      id: existingInvoice._id.toString(),
+      invoiceNumber: existingInvoice.invoiceNumber,
+      poId: existingInvoice.poId,
+      poNumber: existingInvoice.poNumber,
+      customerName: existingInvoice.customerName,
+      gstNumber: existingInvoice.gstNumber,
+      status: existingInvoice.status,
+      totalAmount: existingInvoice.totalAmount,
+      message: "Invoice already exists for this purchase order."
+    });
+    return;
+  }
+
+  // State guard: Rejection and deletion are terminal
+  if (po.status === "REJECTED" || po.status === "DELETED") {
+    res.status(400).json({
+      code: "INVALID_PO_STATE",
+      message: `Cannot generate invoice for purchase order in ${po.status} status`,
+      details: { status: po.status },
+      requestId: req.requestId || ""
+    });
+    return;
+  }
+
+  // Trigger invoice generation step in workflow (advance to APPROVED if not already human approved)
+  if (po.status !== "HUMAN_APPROVED" && po.status !== "APPROVED") {
+    await PurchaseOrderRepository.updateStatus(tenantId, po._id.toString(), "APPROVED");
+  }
   await runOrchestrationWorkflow(tenantId, po._id.toString());
 
   const invoice = await InvoiceRepository.findByPoId(tenantId, po._id.toString());

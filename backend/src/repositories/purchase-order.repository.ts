@@ -3,6 +3,8 @@ import { PurchaseOrder, IPurchaseOrder } from "../models/index.js";
 import { PaginationParams, PaginatedResult, POStatus } from "../types/index.js";
 import { inMemory, isDbConnected, generateId, calcPagination } from "./base.js";
 import { ReviewRepository } from "./review.repository.js";
+import { isValidPOTransition, getAllowedPrecedingStatuses } from "../ai/workflow/workflow-state-machine.js";
+import { logger } from "../utils/logger.js";
 
 export class PurchaseOrderRepository {
   static async create(tenantId: string, data: Partial<IPurchaseOrder>): Promise<IPurchaseOrder> {
@@ -39,6 +41,7 @@ export class PurchaseOrderRepository {
       _id: id, id, tenantId,
       subtotal: 0, tax: 0, discount: 0, totalAmount: 0,
       extractionConfidence: 1.0, retryCount: 0, lineItems: [],
+      version: data.version ?? 1,
       ...data,
       createdAt: new Date(), updatedAt: new Date()
     };
@@ -99,18 +102,49 @@ export class PurchaseOrderRepository {
     tenantId: string,
     id: string,
     status: POStatus,
-    failureReason?: string
+    failureReason?: string,
+    force = false
   ): Promise<IPurchaseOrder | null> {
+    const allowedPreceding = getAllowedPrecedingStatuses(status);
+
     if (isDbConnected()) {
       if (!mongoose.isValidObjectId(id)) return null;
-      const update: any = { status };
-      if (failureReason !== undefined) update.failureReason = failureReason;
-      return PurchaseOrder.findOneAndUpdate({ tenantId, _id: id }, { $set: update }, { new: true });
+      const query: any = { tenantId, _id: id };
+      if (!force) {
+        query.status = { $in: allowedPreceding };
+      }
+      const update: any = {
+        $set: {
+          status,
+          ...(failureReason !== undefined ? { failureReason } : {}),
+          updatedAt: new Date()
+        },
+        $inc: { version: 1 }
+      };
+      const result = await PurchaseOrder.findOneAndUpdate(query, update, { new: true });
+      if (!result && !force) {
+        const current = await PurchaseOrder.findOne({ tenantId, _id: id });
+        if (current) {
+          logger.warn(
+            { tenantId, id, currentStatus: current.status, targetStatus: status },
+            "State Machine: Blocked illegal transition on PurchaseOrder"
+          );
+        }
+      }
+      return result;
     }
     const doc = inMemory.pos.get(id);
     if (!doc || doc.tenantId !== tenantId) return null;
+    if (!force && !isValidPOTransition(doc.status, status)) {
+      logger.warn(
+        { tenantId, id, currentStatus: doc.status, targetStatus: status },
+        "State Machine (in-memory): Blocked illegal transition on PurchaseOrder"
+      );
+      return null;
+    }
     doc.status = status;
     if (failureReason !== undefined) doc.failureReason = failureReason;
+    doc.version = (doc.version || 0) + 1;
     doc.updatedAt = new Date();
     return doc;
   }
@@ -127,16 +161,45 @@ export class PurchaseOrderRepository {
       failureReason?: string;
       extractionConfidence?: number;
       tax?: number;
-    } = {}
+    } = {},
+    force = false
   ): Promise<IPurchaseOrder | null> {
+    const allowedPreceding = getAllowedPrecedingStatuses(status);
     const updatePayload: any = { status, ...extra, updatedAt: new Date() };
+
     if (isDbConnected()) {
       if (!mongoose.isValidObjectId(id)) return null;
-      return PurchaseOrder.findOneAndUpdate({ tenantId, _id: id }, { $set: updatePayload }, { new: true });
+      const query: any = { tenantId, _id: id };
+      if (!force) {
+        query.status = { $in: allowedPreceding };
+      }
+      const result = await PurchaseOrder.findOneAndUpdate(
+        query,
+        { $set: updatePayload, $inc: { version: 1 } },
+        { new: true }
+      );
+      if (!result && !force) {
+        const current = await PurchaseOrder.findOne({ tenantId, _id: id });
+        if (current) {
+          logger.warn(
+            { tenantId, id, currentStatus: current.status, targetStatus: status },
+            "State Machine: Blocked illegal transition on PurchaseOrder in updateHumanReviewStatus"
+          );
+        }
+      }
+      return result;
     }
     const doc = inMemory.pos.get(id);
     if (!doc || doc.tenantId !== tenantId) return null;
+    if (!force && !isValidPOTransition(doc.status, status)) {
+      logger.warn(
+        { tenantId, id, currentStatus: doc.status, targetStatus: status },
+        "State Machine (in-memory): Blocked illegal transition in updateHumanReviewStatus"
+      );
+      return null;
+    }
     Object.assign(doc, updatePayload);
+    doc.version = (doc.version || 0) + 1;
     return doc;
   }
 

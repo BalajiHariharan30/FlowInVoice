@@ -83,6 +83,7 @@ export class QueueManager {
   private static reconnectTimer: NodeJS.Timeout | null = null;
   private static lastError: string | null = null;
   private static connectAttempts: number = 0;
+  private static activeResumeJobs: Set<string> = new Set<string>();
 
   static async initialize(): Promise<void> {
     if (this.isConnecting) return;
@@ -135,6 +136,11 @@ export class QueueManager {
             if (job.name === "resume-po") {
               const data = job.data as POResumeJobData;
               logger.info({ jobId: job.id, data }, "Processing PO resume job via live BullMQ worker");
+              const po = await PurchaseOrderRepository.findById(data.tenantId, data.poId);
+              if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
+                logger.info({ poId: data.poId, status: po?.status }, "BullMQ worker: Skipping resume execution for non-processable/terminal PO");
+                return;
+              }
               const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
               await runOrchestrationWorkflow(data.tenantId, data.poId, undefined, data.approvedReviewId);
               return;
@@ -333,11 +339,19 @@ export class QueueManager {
    * still applies, just without crash-survival.
    */
   static async addPOResumeJob(tenantId: string, poId: string, approvedReviewId: string): Promise<string> {
-    const jobId = `resume:${tenantId}:${poId}:${Date.now()}`;
+    const jobId = `po-resume:${tenantId}:${poId}:${approvedReviewId}`;
 
     if (!this.isMock && this.poQueue) {
       try {
-        await this.poQueue.add("resume-po", { tenantId, poId, approvedReviewId }, { jobId });
+        await this.poQueue.add(
+          "resume-po",
+          { tenantId, poId, approvedReviewId },
+          {
+            jobId,
+            removeOnComplete: true,
+            removeOnFail: 100
+          }
+        );
         logger.info({ jobId, queue: "po-processing" }, "Successfully enqueued PO resume job to BullMQ");
         return jobId;
       } catch (err: any) {
@@ -345,19 +359,40 @@ export class QueueManager {
       }
     }
 
+    if (this.activeResumeJobs.has(jobId)) {
+      logger.info({ jobId }, "Async Queue: Resume job is already active, merging duplicate execution");
+      return jobId;
+    }
+    this.activeResumeJobs.add(jobId);
+
     const MAX_ATTEMPTS = 3;
     const runWithRetry = async (attempt: number): Promise<void> => {
       try {
+        const po = await PurchaseOrderRepository.findById(tenantId, poId);
+        if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
+          logger.info({ poId, status: po?.status }, "Async Queue: Skipping resume execution for terminal PO");
+          this.activeResumeJobs.delete(jobId);
+          return;
+        }
+
         const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
         logger.info({ tenantId, poId, jobId, attempt }, "Async Queue: Starting PO resume workflow");
         await runOrchestrationWorkflow(tenantId, poId, undefined, approvedReviewId);
+        this.activeResumeJobs.delete(jobId);
       } catch (e: any) {
         logger.error({ e: e.message, tenantId, poId, attempt }, "Async PO resume error");
-        if (attempt < MAX_ATTEMPTS) {
-          setTimeout(() => runWithRetry(attempt + 1), Math.pow(2, attempt) * 1000);
-        } else {
+
+        const isPermanentError =
+          e?.code === "DUPLICATE_PO_NUMBER" ||
+          e?.message?.includes("PO not found") ||
+          e?.message?.includes("invalid schema");
+
+        if (isPermanentError || attempt >= MAX_ATTEMPTS) {
+          this.activeResumeJobs.delete(jobId);
           const { handleResumeExhausted } = await import("../ai/workflow/resume-failure-handler.js");
           await handleResumeExhausted(tenantId, poId, approvedReviewId, e);
+        } else {
+          setTimeout(() => runWithRetry(attempt + 1), Math.pow(2, attempt) * 1000);
         }
       }
     };
