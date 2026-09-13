@@ -104,6 +104,9 @@ export class StorageService {
   }
 
   static async getFileBuffer(s3Key: string): Promise<Buffer | null> {
+    if (!s3Key) {
+      return null;
+    }
     if (env.STORAGE_PROVIDER === "s3" && this.s3Client) {
       try {
         const command = new GetObjectCommand({

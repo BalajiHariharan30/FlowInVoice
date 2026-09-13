@@ -13,6 +13,7 @@ import { QdrantService } from "../src/rag/qdrant.service.js";
 import { QueueManager } from "../src/workers/queue.js";
 import { isValidPOTransition } from "../src/ai/workflow/workflow-state-machine.js";
 import { runOrchestrationWorkflow } from "../src/ai/workflow/graph.js";
+import { createPostingNode } from "../src/ai/workflow/posting/posting.agent.js";
 
 function generateAuthToken(tenantId: string, role: any = "ADMIN"): string {
   return AuthService.generateTokens({
@@ -768,5 +769,122 @@ describe("Workflow Loop, State, Queue & Agent Remediation Test Suite", () => {
     expect(jobIds[1]).toBe(jobIds[0]);
     expect(jobIds[2]).toBe(jobIds[0]);
     expect(jobIds[3]).toBe(jobIds[0]);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 14. Review Deduplication on Concurrent Ingestion
+  // ──────────────────────────────────────────────────────────────────────────
+  it("14. Review Deduplication: Promise.all concurrent review creations yield exactly 1 pending ticket", async () => {
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-CONCURRENT-REVIEW-01",
+      customerName: "Multi Review Corp",
+      status: "PROCESSING",
+      subtotal: 500.0,
+      totalAmount: 500.0,
+      lineItems: []
+    });
+    const poId = po._id.toString();
+
+    const payload = {
+      entity: "purchase_order" as const,
+      entityId: poId,
+      stage: "validation" as const,
+      status: "PENDING" as const,
+      priority: "HIGH" as const,
+      reason: "Concurrent validation deviation trigger",
+      requestedByAgent: "ValidationAgent"
+    };
+
+    // 3 concurrent creates for the same PO
+    const results = await Promise.all([
+      ReviewRepository.create(tenantId, payload),
+      ReviewRepository.create(tenantId, payload),
+      ReviewRepository.create(tenantId, payload)
+    ]);
+
+    // All return the exact same canonical review
+    expect(results[0]._id.toString()).toBe(results[1]._id.toString());
+    expect(results[1]._id.toString()).toBe(results[2]._id.toString());
+
+    // Only 1 review exists for this PO
+    const allReviews = await ReviewRepository.findByEntityId(tenantId, poId);
+    expect(allReviews.length).toBe(1);
+    expect(allReviews[0].status).toBe("PENDING");
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 15. Posting Node Guard on Terminal PO
+  // ──────────────────────────────────────────────────────────────────────────
+  it("15. Posting Terminal Guard: stale worker reaching posting on a REJECTED PO halts without issuing invoice", async () => {
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-TERMINAL-POSTING-01",
+      customerName: "Terminated Client",
+      status: "REJECTED", // Terminated
+      subtotal: 1000.0,
+      tax: 180.0,
+      totalAmount: 1180.0,
+      lineItems: [
+        { lineNumber: 1, productCode: "SKU-TERM", description: "Item", quantity: 1, unitPrice: 1000.0, lineTotal: 1000.0, taxRate: 18.0 }
+      ]
+    });
+    const poId = po._id.toString();
+
+    // Stale worker executes posting node
+    const postingFn = createPostingNode(tenantId);
+    const result = await postingFn({
+      tenantId,
+      poId,
+      workflowId: "wf_term_test",
+      documentName: "test.pdf",
+      s3Key: "test.pdf",
+      validationErrors: [],
+      validationChecks: [],
+      evidence: [],
+      policySourceReferences: [],
+      matchedLineItems: [],
+      allowedVariancePct: 10,
+      approvalRequired: false,
+      isBusinessException: false,
+      isHumanApproved: false,
+      skipValidation: false,
+      status: "REJECTED",
+      currentStep: "posting",
+      toolCallCount: 0,
+      stepRetries: {}
+    });
+
+    expect(result.status).toBe("REJECTED");
+    expect(result.currentStep).toBe("terminated");
+
+    // No invoice was created
+    const invoice = await InvoiceRepository.findByPoId(tenantId, poId);
+    expect(invoice).toBeNull();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 16. Finite Remediation Boundary: Unrecoverable PO Terminates Cleanly
+  // ──────────────────────────────────────────────────────────────────────────
+  it("16. Remediation Boundary: continuous errors terminate in HUMAN_REVIEW with CRITICAL diagnosis", async () => {
+    // Missing all line items so validation continuously fails
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-UNRECOVERABLE-01",
+      customerName: "Faulty Corp",
+      status: "PROCESSING",
+      retryCount: 2, // Already retried twice
+      lineItems: []  // Empty line items will trigger validation failure
+    });
+    const poId = po._id.toString();
+
+    const result = await runOrchestrationWorkflow(tenantId, poId);
+
+    expect(result.status).toBe("HUMAN_REVIEW");
+    expect(result.isBusinessException).toBe(true);
+
+    // Verify structured suggestedFix was created due to accumulated error count
+    const reviews = await ReviewRepository.findByEntityId(tenantId, poId);
+    expect(reviews.length).toBe(1);
+    expect(reviews[0].priority).toBe("CRITICAL");
+    expect(reviews[0].suggestedFix).toBeDefined();
+    expect(reviews[0].suggestedFix?.recommendedAction).toBeDefined();
   });
 });

@@ -6,6 +6,7 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     testTimeout: 20000,
+    fileParallelism: false,
     env: {
       DOCUMENT_AI_PROVIDER: "mock",
       STORAGE_PROVIDER: "mock",
