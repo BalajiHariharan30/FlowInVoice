@@ -4,6 +4,9 @@ import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { runOrchestrationWorkflow } from "../ai/workflow/index.js";
 import { PurchaseOrderRepository, ReviewRepository } from "../repositories/index.js";
+import { PurchaseOrderModel } from "../models/purchase-order.model.js";
+import { PurchaseOrderEntity } from "../domain/entities/purchase-order.entity.js";
+import { runDeterministicPipeline } from "../ai/workflow/deterministic.js";
 
 export interface POProcessingJobData {
   tenantId: string;
@@ -134,29 +137,65 @@ export class QueueManager {
         this.poWorker = new Worker(
           "po-processing",
           async (job: Job<POProcessingJobData | POResumeJobData>) => {
-            if (job.name === "resume-po") {
-              const data = job.data as POResumeJobData;
-              logger.info({ jobId: job.id, data }, "Processing PO resume job via live BullMQ worker");
-              const po = await PurchaseOrderRepository.findById(data.tenantId, data.poId);
-              if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
-                logger.info({ poId: data.poId, status: po?.status }, "BullMQ worker: Skipping resume execution for non-processable/terminal PO");
-                return;
-              }
-              const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
-              await runOrchestrationWorkflow(data.tenantId, data.poId, undefined, data.approvedReviewId);
-              return;
-            }
-            const procData = job.data as POProcessingJobData;
-            logger.info({ jobId: job.id, data: procData }, "Processing PO job via live BullMQ worker");
-            const po = await PurchaseOrderRepository.findById(procData.tenantId, procData.poId);
+            // 1. ALWAYS extract only the ID from job data (never full stale objects)
+            const isResumeAction = job.name === "resume-po";
+            const poId = (job.data as any).poId;
+            const tenantId = (job.data as any).tenantId;
+            const approvedReviewId = (job.data as any).approvedReviewId;
+
+            // 2. Fetch fresh state directly from DB
+            const po = await PurchaseOrderRepository.findById(tenantId, poId);
             if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
-              logger.info({ poId: procData.poId, status: po?.status }, "BullMQ worker: Skipping execution for non-processable PO");
+              logger.info({ poId, status: po?.status }, "BullMQ worker: Skipping execution for non-processable/terminal PO");
               return;
             }
-            await runOrchestrationWorkflow(procData.tenantId, procData.poId);
+
+            // 3. Map MongoDB Document -> Domain Entity State Machine
+            const poEntity = PurchaseOrderEntity.create({
+              id: po._id.toString(),
+              tenantId: po.tenantId,
+              status: po.status as any,
+              poNumber: po.poNumber,
+              vendorName: po.customerName,
+              customerName: po.customerName,
+              totalAmount: po.totalAmount,
+              baseAmount: po.subtotal,
+              subtotal: po.subtotal,
+              taxAmount: po.tax,
+              tax: po.tax,
+              lineItems: (po.lineItems || []).map((li: any) => ({
+                description: li.description || li.productCode || "",
+                quantity: li.quantity || 1,
+                unitPrice: li.unitPrice || 0,
+                totalPrice: li.lineTotal || 0,
+                lineTotal: li.lineTotal || 0,
+                productCode: li.productCode,
+                lineNumber: li.lineNumber
+              })),
+              isResumed: Boolean(isResumeAction || approvedReviewId),
+              version: po.version || 0
+            });
+
+            if (isResumeAction || approvedReviewId) {
+              poEntity.resumeExecution();
+            }
+
+            // 4. Run pipeline using guarded aggregate root
+            if (isResumeAction) {
+              logger.info({ jobId: job.id, poId }, "Processing PO resume job via live BullMQ worker");
+              const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
+              await runOrchestrationWorkflow(tenantId, poId, undefined, approvedReviewId);
+            } else {
+              logger.info({ jobId: job.id, poId }, "Processing PO job via live BullMQ worker");
+              const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
+              await runOrchestrationWorkflow(tenantId, poId);
+            }
+
+            logger.info({ poId, status: poEntity.status }, `[Worker] Successfully processed PO ${poId}`);
           },
           { connection: this.workerConnection }
         );
+        poWorker = this.poWorker;
 
         // After all BullMQ retry attempts are exhausted for a resume job,
         // reopen a review ticket instead of letting it disappear silently.
@@ -409,4 +448,50 @@ export class QueueManager {
 
     return jobId;
   }
+}
+
+export let poWorker: Worker | null = null;
+
+/**
+ * Direct DDD Worker function (InvoiceScan pattern) to process a job with PurchaseOrderEntity encapsulation.
+ */
+export async function processPOJobWithEntity(job: Job): Promise<void> {
+  const { poId, tenantId, isResumeAction, approvedReviewId } = (job.data as any) || {};
+  const tId = tenantId || "default";
+  const poDoc = await PurchaseOrderRepository.findById(tId, poId);
+  if (!poDoc) {
+    throw new Error(`PO with ID ${poId} not found in database.`);
+  }
+
+  const poEntity = PurchaseOrderEntity.create({
+    id: poDoc._id.toString(),
+    tenantId: poDoc.tenantId,
+    status: poDoc.status as any,
+    poNumber: poDoc.poNumber,
+    customerName: poDoc.customerName,
+    vendorName: poDoc.customerName,
+    totalAmount: poDoc.totalAmount,
+    baseAmount: poDoc.subtotal,
+    subtotal: poDoc.subtotal,
+    taxAmount: poDoc.tax,
+    tax: poDoc.tax,
+    lineItems: (poDoc.lineItems || []).map((li: any) => ({
+      description: li.description || li.productCode || "",
+      quantity: li.quantity || 1,
+      unitPrice: li.unitPrice || 0,
+      totalPrice: li.lineTotal || 0,
+      lineTotal: li.lineTotal || 0,
+      productCode: li.productCode,
+      lineNumber: li.lineNumber
+    })),
+    isResumed: Boolean(isResumeAction || approvedReviewId),
+    version: poDoc.version || 0
+  });
+
+  if (isResumeAction || approvedReviewId) {
+    poEntity.resumeExecution();
+  }
+
+  const updatedEntity = await runDeterministicPipeline(poEntity);
+  logger.info({ poId, status: updatedEntity.status }, `[Worker] Successfully processed PO ${poId} -> Final Status: ${updatedEntity.status}`);
 }
