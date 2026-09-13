@@ -28,7 +28,7 @@ import {
 } from "../../repositories/index.js";
 import { logger } from "../../utils/logger.js";
 import { WorkflowState } from "./state.js";
-import { PurchaseOrderEntity, DomainError } from "../../domain/entities/purchase-order.entity.js";
+import { PurchaseOrderEntity, DomainError, mapToEntityStatus } from "../../domain/entities/purchase-order.entity.js";
 
 export interface WorkflowExecutionResult {
   poId: string;
@@ -356,32 +356,27 @@ export async function runDeterministicWorkflow(
   const poEntity = PurchaseOrderEntity.create({
     id: po._id.toString(),
     tenantId: po.tenantId,
-    status: po.status as any,
-    poNumber: po.poNumber,
-    customerName: po.customerName,
+    status: mapToEntityStatus(po.status),
     vendorName: po.customerName,
     totalAmount: po.totalAmount,
     baseAmount: po.subtotal,
-    subtotal: po.subtotal,
     taxAmount: po.tax,
-    tax: po.tax,
     lineItems: (po.lineItems || []).map((li: any) => ({
       description: li.description || li.productCode || "",
       quantity: li.quantity || 1,
       unitPrice: li.unitPrice || 0,
-      totalPrice: li.lineTotal || 0,
-      lineTotal: li.lineTotal || 0,
-      productCode: li.productCode,
-      lineNumber: li.lineNumber
+      totalPrice: li.lineTotal || 0
     })),
     isResumed: Boolean(isHumanApproved),
-    version: po.version || 0,
-    workflowId
+    version: po.version || 0
   });
 
   if (isHumanApproved) {
+    if (poEntity.status !== "DISCREPANCY_FOUND" && poEntity.status !== "READY_FOR_APPROVAL") {
+      poEntity.markReadyForApproval();
+    }
     poEntity.resumeExecution();
-  } else if (po.status === "UPLOADED" || (po.status as string) === "PENDING" || (po.status as string) === "VALIDATION_FAILED") {
+  } else if (poEntity.status === "PENDING" || poEntity.status === "VALIDATION_FAILED") {
     poEntity.startProcessing();
   }
 
@@ -633,7 +628,7 @@ export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise
     // ------------------------------------------------------------------------
     // RESUMPTION CHECKPOINT DEFENSE (Prevents overwriting user corrections)
     // ------------------------------------------------------------------------
-    if (po.isResumed || po.status === "READY_FOR_APPROVAL" || po.status === "HUMAN_APPROVED" || po.status === "DISCREPANCY_FOUND") {
+    if (po.isResumed || po.status === "READY_FOR_APPROVAL" || (po.status as string) === "HUMAN_APPROVED" || po.status === "DISCREPANCY_FOUND") {
       logger.info({ poId: po.id }, `[Pipeline] Resuming PO ${po.id} from checkpoint gate.`);
       await runDeterministicWorkflow(po.tenantId, po.id, undefined);
       const updatedPo = await PurchaseOrderRepository.findById(po.tenantId, po.id);
@@ -641,23 +636,16 @@ export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise
         return PurchaseOrderEntity.create({
           id: updatedPo._id.toString(),
           tenantId: updatedPo.tenantId,
-          status: updatedPo.status as any,
-          poNumber: updatedPo.poNumber,
-          customerName: updatedPo.customerName,
+          status: mapToEntityStatus(updatedPo.status),
           vendorName: updatedPo.customerName,
           totalAmount: updatedPo.totalAmount,
           baseAmount: updatedPo.subtotal,
-          subtotal: updatedPo.subtotal,
           taxAmount: updatedPo.tax,
-          tax: updatedPo.tax,
           lineItems: (updatedPo.lineItems || []).map((li: any) => ({
             description: li.description || li.productCode || "",
             quantity: li.quantity || 1,
             unitPrice: li.unitPrice || 0,
-            totalPrice: li.lineTotal || 0,
-            lineTotal: li.lineTotal || 0,
-            productCode: li.productCode,
-            lineNumber: li.lineNumber
+            totalPrice: li.lineTotal || 0
           })),
           isResumed: true,
           version: updatedPo.version || 0
@@ -673,23 +661,16 @@ export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise
       return PurchaseOrderEntity.create({
         id: updatedPo._id.toString(),
         tenantId: updatedPo.tenantId,
-        status: updatedPo.status as any,
-        poNumber: updatedPo.poNumber,
-        customerName: updatedPo.customerName,
+        status: mapToEntityStatus(updatedPo.status),
         vendorName: updatedPo.customerName,
         totalAmount: updatedPo.totalAmount,
         baseAmount: updatedPo.subtotal,
-        subtotal: updatedPo.subtotal,
         taxAmount: updatedPo.tax,
-        tax: updatedPo.tax,
         lineItems: (updatedPo.lineItems || []).map((li: any) => ({
           description: li.description || li.productCode || "",
           quantity: li.quantity || 1,
           unitPrice: li.unitPrice || 0,
-          totalPrice: li.lineTotal || 0,
-          lineTotal: li.lineTotal || 0,
-          productCode: li.productCode,
-          lineNumber: li.lineNumber
+          totalPrice: li.lineTotal || 0
         })),
         isResumed: false,
         version: updatedPo.version || 0

@@ -5,7 +5,7 @@ import { logger } from "../utils/logger.js";
 import { runOrchestrationWorkflow } from "../ai/workflow/index.js";
 import { PurchaseOrderRepository, ReviewRepository } from "../repositories/index.js";
 import { PurchaseOrderModel } from "../models/purchase-order.model.js";
-import { PurchaseOrderEntity } from "../domain/entities/purchase-order.entity.js";
+import { PurchaseOrderEntity, mapToEntityStatus } from "../domain/entities/purchase-order.entity.js";
 import { runDeterministicPipeline } from "../ai/workflow/deterministic.js";
 
 export interface POProcessingJobData {
@@ -154,29 +154,25 @@ export class QueueManager {
             const poEntity = PurchaseOrderEntity.create({
               id: po._id.toString(),
               tenantId: po.tenantId,
-              status: po.status as any,
-              poNumber: po.poNumber,
+              status: mapToEntityStatus(po.status),
               vendorName: po.customerName,
-              customerName: po.customerName,
               totalAmount: po.totalAmount,
               baseAmount: po.subtotal,
-              subtotal: po.subtotal,
               taxAmount: po.tax,
-              tax: po.tax,
               lineItems: (po.lineItems || []).map((li: any) => ({
                 description: li.description || li.productCode || "",
                 quantity: li.quantity || 1,
                 unitPrice: li.unitPrice || 0,
-                totalPrice: li.lineTotal || 0,
-                lineTotal: li.lineTotal || 0,
-                productCode: li.productCode,
-                lineNumber: li.lineNumber
+                totalPrice: li.lineTotal || 0
               })),
               isResumed: Boolean(isResumeAction || approvedReviewId),
               version: po.version || 0
             });
 
             if (isResumeAction || approvedReviewId) {
+              if (poEntity.status !== "DISCREPANCY_FOUND" && poEntity.status !== "READY_FOR_APPROVAL") {
+                poEntity.markReadyForApproval();
+              }
               poEntity.resumeExecution();
             }
 
@@ -466,29 +462,25 @@ export async function processPOJobWithEntity(job: Job): Promise<void> {
   const poEntity = PurchaseOrderEntity.create({
     id: poDoc._id.toString(),
     tenantId: poDoc.tenantId,
-    status: poDoc.status as any,
-    poNumber: poDoc.poNumber,
-    customerName: poDoc.customerName,
+    status: mapToEntityStatus(poDoc.status),
     vendorName: poDoc.customerName,
     totalAmount: poDoc.totalAmount,
     baseAmount: poDoc.subtotal,
-    subtotal: poDoc.subtotal,
     taxAmount: poDoc.tax,
-    tax: poDoc.tax,
     lineItems: (poDoc.lineItems || []).map((li: any) => ({
       description: li.description || li.productCode || "",
       quantity: li.quantity || 1,
       unitPrice: li.unitPrice || 0,
-      totalPrice: li.lineTotal || 0,
-      lineTotal: li.lineTotal || 0,
-      productCode: li.productCode,
-      lineNumber: li.lineNumber
+      totalPrice: li.lineTotal || 0
     })),
     isResumed: Boolean(isResumeAction || approvedReviewId),
     version: poDoc.version || 0
   });
 
   if (isResumeAction || approvedReviewId) {
+    if (poEntity.status !== "DISCREPANCY_FOUND" && poEntity.status !== "READY_FOR_APPROVAL") {
+      poEntity.markReadyForApproval();
+    }
     poEntity.resumeExecution();
   }
 

@@ -6,57 +6,60 @@ export type POStatus =
   | 'READY_FOR_APPROVAL' 
   | 'APPROVED' 
   | 'REJECTED' 
-  | 'VALIDATION_FAILED'
-  | 'UPLOADED'
-  | 'VALIDATING'
-  | 'RAG_CHECKING'
-  | 'COMPLIANCE_CHECKING'
-  | 'HUMAN_REVIEW'
-  | 'HUMAN_APPROVED'
-  | 'INVOICE_GENERATING'
-  | 'INVOICE_VALIDATING'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'DELETED';
+  | 'VALIDATION_FAILED';
 
 export interface POLineItem {
   description: string;
   quantity: number;
   unitPrice: number;
-  totalPrice?: number;
-  lineTotal?: number;
-  productCode?: string;
-  itemNumber?: number;
-  lineNumber?: number;
-  taxRate?: number;
-  gstNumber?: string;
-  currency?: string;
+  totalPrice: number;
 }
 
 export interface POData {
   id: string;
   tenantId: string;
   status: POStatus;
-  poNumber?: string;
-  customerName?: string;
   vendorName?: string;
   totalAmount?: number;
   baseAmount?: number;
-  subtotal?: number;
   taxAmount?: number;
-  tax?: number;
   lineItems: POLineItem[];
   rejectionReason?: string;
-  failureReason?: string;
   isResumed: boolean;
   version: number;
-  workflowId?: string;
 }
 
 export class DomainError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'DomainError';
+  }
+}
+
+export function mapToEntityStatus(status: string): POStatus {
+  switch (status) {
+    case 'UPLOADED':
+    case 'PENDING':
+      return 'PENDING';
+    case 'PROCESSING':
+      return 'PROCESSING';
+    case 'EXTRACTED':
+      return 'EXTRACTED';
+    case 'HUMAN_REVIEW':
+    case 'DISCREPANCY_FOUND':
+      return 'DISCREPANCY_FOUND';
+    case 'HUMAN_APPROVED':
+    case 'READY_FOR_APPROVAL':
+      return 'READY_FOR_APPROVAL';
+    case 'APPROVED':
+      return 'APPROVED';
+    case 'REJECTED':
+      return 'REJECTED';
+    case 'FAILED':
+    case 'VALIDATION_FAILED':
+      return 'VALIDATION_FAILED';
+    default:
+      return (status as POStatus) || 'PENDING';
   }
 }
 
@@ -80,8 +83,7 @@ export class PurchaseOrderEntity {
   // State Transition Guards (InvoiceScan DDD Pattern)
 
   public startProcessing(): void {
-    const validPreceding = ['PENDING', 'VALIDATION_FAILED', 'UPLOADED', 'FAILED'];
-    if (!validPreceding.includes(this.props.status)) {
+    if (this.props.status !== 'PENDING' && this.props.status !== 'VALIDATION_FAILED') {
       throw new DomainError(`Cannot transition to PROCESSING from state: ${this.props.status}`);
     }
     this.props.status = 'PROCESSING';
@@ -93,12 +95,9 @@ export class PurchaseOrderEntity {
       throw new DomainError(`Cannot transition to EXTRACTED from state: ${this.props.status}`);
     }
     this.props.vendorName = extractedData.vendorName ?? this.props.vendorName;
-    this.props.customerName = extractedData.customerName ?? extractedData.vendorName ?? this.props.customerName;
     this.props.totalAmount = extractedData.totalAmount ?? this.props.totalAmount;
-    this.props.baseAmount = extractedData.baseAmount ?? extractedData.subtotal ?? this.props.baseAmount;
-    this.props.subtotal = extractedData.subtotal ?? extractedData.baseAmount ?? this.props.subtotal;
-    this.props.taxAmount = extractedData.taxAmount ?? extractedData.tax ?? this.props.taxAmount;
-    this.props.tax = extractedData.tax ?? extractedData.taxAmount ?? this.props.tax;
+    this.props.baseAmount = extractedData.baseAmount ?? this.props.baseAmount;
+    this.props.taxAmount = extractedData.taxAmount ?? this.props.taxAmount;
     this.props.lineItems = extractedData.lineItems ?? this.props.lineItems;
     this.props.status = 'EXTRACTED';
     this.props.version += 1;
@@ -116,8 +115,7 @@ export class PurchaseOrderEntity {
 
   public resumeExecution(): void {
     // Defense against Router 1 Bypass: Guard checkpoint status
-    const checkpointStatuses = ['DISCREPANCY_FOUND', 'READY_FOR_APPROVAL', 'HUMAN_REVIEW', 'HUMAN_APPROVED'];
-    if (!checkpointStatuses.includes(this.props.status)) {
+    if (this.props.status !== 'DISCREPANCY_FOUND' && this.props.status !== 'READY_FOR_APPROVAL') {
       throw new DomainError(`Cannot resume PO in non-checkpoint status: ${this.props.status}`);
     }
     this.props.isResumed = true;
@@ -127,7 +125,6 @@ export class PurchaseOrderEntity {
   public markValidationFailed(reason: string): void {
     this.props.status = 'VALIDATION_FAILED';
     this.props.rejectionReason = reason;
-    this.props.failureReason = reason;
     this.props.version += 1;
   }
 }
