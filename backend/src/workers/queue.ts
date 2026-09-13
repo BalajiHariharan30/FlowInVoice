@@ -84,6 +84,7 @@ export class QueueManager {
   private static lastError: string | null = null;
   private static connectAttempts: number = 0;
   private static activeResumeJobs: Set<string> = new Set<string>();
+  private static activeProcessingJobs: Set<string> = new Set<string>();
 
   static async initialize(): Promise<void> {
     if (this.isConnecting) return;
@@ -291,7 +292,7 @@ export class QueueManager {
   }
 
   static async addPOProcessingJob(tenantId: string, poId: string): Promise<string> {
-    const jobId = `po-process:${tenantId}:${poId}`;
+    const jobId = `po-process-${tenantId}-${poId}`;
 
     if (!this.isMock && this.poQueue) {
       try {
@@ -311,6 +312,12 @@ export class QueueManager {
       }
     }
 
+    if (this.activeProcessingJobs.has(jobId)) {
+      logger.info({ jobId }, "Async Queue: Processing job is already active, merging duplicate execution");
+      return jobId;
+    }
+    this.activeProcessingJobs.add(jobId);
+
     // Realistic asynchronous dispatch: schedules with a small stagger (300ms)
     // so client receives the 202 Accepted response and can establish SSE / polling before pipeline steps execute
     setTimeout(async () => {
@@ -324,6 +331,8 @@ export class QueueManager {
         await runOrchestrationWorkflow(tenantId, poId);
       } catch (e: any) {
         logger.error({ e: e.message, tenantId, poId }, "Async PO processing error");
+      } finally {
+        this.activeProcessingJobs.delete(jobId);
       }
     }, 300);
 
@@ -339,7 +348,7 @@ export class QueueManager {
    * still applies, just without crash-survival.
    */
   static async addPOResumeJob(tenantId: string, poId: string, approvedReviewId: string): Promise<string> {
-    const jobId = `po-resume:${tenantId}:${poId}:${approvedReviewId}`;
+    const jobId = `po-resume-${tenantId}-${poId}-${approvedReviewId}`;
 
     if (!this.isMock && this.poQueue) {
       try {

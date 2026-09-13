@@ -34,6 +34,16 @@ export function createPostingNode(tenantId: string) {
       throw new Error(`PO not found for posting: ${state.poId}`);
     }
 
+    if (["REJECTED", "DELETED"].includes(po.status)) {
+      logger.warn({ tenantId, poId: state.poId, status: po.status }, "PostingAgent: PO is terminated; halting posting.");
+      return {
+        status: po.status,
+        isBusinessException: true,
+        validationErrors: [`PO is in terminal state: ${po.status}`],
+        currentStep: "terminated"
+      };
+    }
+
     // 0. Arithmetic Invariance Guard: Strictly validate qty * unitPrice == lineTotal
     const mathErrors: string[] = [];
     if (po.lineItems && po.lineItems.length > 0) {

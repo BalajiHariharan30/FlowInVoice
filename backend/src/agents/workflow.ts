@@ -26,6 +26,10 @@ export interface WorkflowContext {
   currentStage: "intake" | "extraction" | "verification" | "validation" | "invoice_gen" | "invoice_verif" | "completed";
 }
 
+/**
+ * @deprecated Legacy sequential workflow. Production runtime exclusively uses
+ * runDeterministicWorkflow in backend/src/ai/workflow/deterministic.ts.
+ */
 export class POProcessingWorkflow {
   /**
    * Main entry point to run or resume the PO processing workflow
@@ -34,6 +38,11 @@ export class POProcessingWorkflow {
     const po = await PurchaseOrderRepository.findById(tenantId, poId);
     if (!po) {
       logger.error({ tenantId, poId }, "PO not found for processing");
+      return;
+    }
+
+    if (po.status === "COMPLETED" || po.status === "DELETED") {
+      logger.info({ tenantId, poId, status: po.status }, "Human Review Gate: PO is terminal; halting workflow execution");
       return;
     }
 
