@@ -7,7 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "queue:reset": "tsx src/scripts/reset-queue.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1129.0",
