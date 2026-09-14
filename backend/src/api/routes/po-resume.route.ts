@@ -66,6 +66,8 @@ router.post(["/po/:id/resume", "/pos/:id/resume", "/:id/resume"], async (req: an
       return res.status(404).json({ success: false, error: "Purchase Order not found in database" });
     }
 
+    console.log(`[Resume API] Pre-dispatch DB check: PO ${poId} status set to "${updatedDoc.status}", isResumed: ${updatedDoc.isResumed}`);
+
     // Add job to BullMQ with explicit resume parameters
     try {
       if (QueueManager.getHealthStatus().status === "connected") {

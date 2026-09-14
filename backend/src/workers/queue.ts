@@ -139,7 +139,6 @@ export class QueueManager {
           "po-processing",
           async (job: Job<POProcessingJobData | POResumeJobData>) => {
             // 1. ALWAYS extract only the ID from job data (never full stale objects)
-            const isResumeAction = job.name === "resume-po";
             const poId = (job.data as any).poId;
             const tenantId = (job.data as any).tenantId;
             const approvedReviewId = (job.data as any).approvedReviewId;
@@ -150,6 +149,15 @@ export class QueueManager {
               logger.info({ poId, status: po?.status }, "BullMQ worker: Skipping execution for non-processable/terminal PO");
               return;
             }
+
+            const isResumeAction =
+              job.name === "po-resume" ||
+              job.name === "resume-po" ||
+              Boolean((job.data as any).isResumeAction) ||
+              (job.data as any).action === "resume" ||
+              Boolean((po as any)?.isResumed) ||
+              Boolean(approvedReviewId) ||
+              ["READY_FOR_APPROVAL", "DISCREPANCY_FOUND", "REVIEW_REQUIRED", "NEEDS_APPROVAL", "HUMAN_REVIEW", "HUMAN_APPROVED"].includes(po.status);
 
             // 3. Map MongoDB Document -> Domain Entity State Machine
             const poEntity = PurchaseOrderEntity.create({
@@ -453,6 +461,7 @@ export async function processPOJobWithEntity(job: Job): Promise<void> {
   console.log(`\n==================================================`);
   console.log(`[Worker Entry] Received Job Name: "${job.name}" | ID: ${job.id}`);
   console.log(`[Worker Payload]:`, JSON.stringify(job.data));
+  console.trace(`[Worker Callstack Trace]`);
   console.log(`==================================================\n`);
 
   const poId = job.data.poId || job.data.id || job.data.purchaseOrderId;
@@ -473,6 +482,8 @@ export async function processPOJobWithEntity(job: Job): Promise<void> {
     throw new Error(`[Worker Fatal] Purchase Order ${poId} not found in database.`);
   }
 
+  console.log(`[Worker DB Inspection] PO ID: ${poId} | Raw DB Status: "${poDoc.status}" | isResumed: ${poDoc.isResumed}`);
+
   // Detect resume flag from job name, payload property, OR DB status
   const isResumeAction =
     job.name === "po-resume" ||
@@ -480,7 +491,9 @@ export async function processPOJobWithEntity(job: Job): Promise<void> {
     job.data.isResumeAction === true ||
     job.data.action === "resume" ||
     poDoc.isResumed === true ||
-    ["READY_FOR_APPROVAL", "DISCREPANCY_FOUND", "REVIEW_REQUIRED", "HUMAN_REVIEW", "HUMAN_APPROVED"].includes(poDoc.status);
+    ["READY_FOR_APPROVAL", "DISCREPANCY_FOUND", "REVIEW_REQUIRED", "NEEDS_APPROVAL", "HUMAN_REVIEW", "HUMAN_APPROVED"].includes(poDoc.status);
+
+  console.log(`[Worker Resumption Check] isResumeAction evaluated to: ${isResumeAction}`);
 
   // Hydrate Aggregate Root Entity
   const poEntity = PurchaseOrderEntity.create({

@@ -192,7 +192,11 @@ export function calculateResumeStage(
   persistedStep?: string,
   poStatus?: string
 ): "matching" | "poValidation" | "policyEvaluation" | "approvalDecision" | "posting" {
-  if (poStatus === "READY_FOR_APPROVAL") {
+  if (
+    poStatus === "READY_FOR_APPROVAL" ||
+    poStatus === "REVIEW_REQUIRED" ||
+    poStatus === "NEEDS_APPROVAL"
+  ) {
     return "policyEvaluation";
   }
 
@@ -240,11 +244,48 @@ export function calculateResumeStage(
 // ---------------------------------------------------------------------------
 
 export async function runDeterministicWorkflow(
-  tenantId: string,
-  poId: string,
+  tenantIdOrRawData: string | any,
+  poIdParam?: string,
   options?: WorkflowExecutionOptions,
   approvedReviewId?: string
-): Promise<WorkflowExecutionResult> {
+): Promise<WorkflowExecutionResult | any> {
+  // Support overload where caller passes rawPoData directly
+  if (typeof tenantIdOrRawData === "object" && tenantIdOrRawData !== null && !poIdParam) {
+    const rawPoData = tenantIdOrRawData;
+    const currentStatus = rawPoData.status || "PENDING";
+    const isResume =
+      rawPoData.isResumed === true ||
+      ["READY_FOR_APPROVAL", "DISCREPANCY_FOUND", "REVIEW_REQUIRED", "NEEDS_APPROVAL", "HUMAN_REVIEW", "HUMAN_APPROVED"].includes(currentStatus);
+
+    const poEntity = PurchaseOrderEntity.create({
+      id: rawPoData._id?.toString() || rawPoData.id,
+      tenantId: rawPoData.tenantId || "default",
+      status: currentStatus,
+      vendorName: rawPoData.vendorName || rawPoData.customerName,
+      totalAmount: rawPoData.totalAmount,
+      baseAmount: rawPoData.baseAmount ?? rawPoData.subtotal,
+      taxAmount: rawPoData.taxAmount ?? rawPoData.tax,
+      lineItems: rawPoData.lineItems || [],
+      isResumed: isResume,
+      version: rawPoData.__v || rawPoData.version || 0
+    });
+
+    if (isResume) {
+      if (poEntity.status !== "DISCREPANCY_FOUND" && poEntity.status !== "READY_FOR_APPROVAL") {
+        poEntity.markReadyForApproval();
+      }
+      poEntity.resumeExecution();
+    }
+
+    return await runDeterministicPipeline(poEntity);
+  }
+
+  const tenantId = tenantIdOrRawData as string;
+  const poId: string = poIdParam!;
+  if (!poId) {
+    throw new Error("PO ID is required for deterministic workflow execution");
+  }
+
   const po = await PurchaseOrderRepository.findById(tenantId, poId);
   if (!po) {
     throw new Error(`PO not found: ${poId}`);
@@ -252,14 +293,14 @@ export async function runDeterministicWorkflow(
 
   const workflowId = po.workflowId || `wf_${uuidv4()}`;
   if (!po.workflowId) {
-    await PurchaseOrderRepository.updateExtraction(tenantId, poId, { workflowId });
+    await PurchaseOrderRepository.updateExtraction(tenantId, poId!, { workflowId });
   }
 
   // ── Rule 1: REJECTED terminal ──────────────────────────────────────────────
   if (po.status === "REJECTED") {
     logger.info({ tenantId, poId }, "DeterministicOrchestrator: PO is REJECTED; aborting");
     return {
-      poId, workflowId,
+      poId: poId!, workflowId,
       status: "REJECTED",
       isBusinessException: true,
       validationErrors: [po.failureReason || po.terminationReason || "PO is rejected"],
@@ -271,7 +312,7 @@ export async function runDeterministicWorkflow(
   if (po.status === "DELETED") {
     logger.info({ tenantId, poId }, "DeterministicOrchestrator: PO is DELETED; aborting");
     return {
-      poId, workflowId,
+      poId: poId!, workflowId,
       status: "DELETED",
       isBusinessException: true,
       validationErrors: ["PO has been deleted"],
@@ -281,10 +322,10 @@ export async function runDeterministicWorkflow(
 
   // ── Rule 7: Idempotent short-circuit for COMPLETED ────────────────────────
   if (po.status === "COMPLETED") {
-    const existingInvoice = await InvoiceRepository.findByPoId(tenantId, poId);
+    const existingInvoice = await InvoiceRepository.findByPoId(tenantId, poId!);
     logger.info({ tenantId, poId, invoiceId: existingInvoice?._id }, "DeterministicOrchestrator: already COMPLETED; returning existing invoice");
     return {
-      poId, workflowId,
+      poId: poId!, workflowId,
       status: "COMPLETED",
       isBusinessException: false,
       validationErrors: [],
@@ -301,25 +342,25 @@ export async function runDeterministicWorkflow(
   // misread approval state in the past (see collapse-duplicate-reviews.ts).
   const review = approvedReviewId
     ? await ReviewRepository.findById(tenantId, approvedReviewId)
-    : await ReviewRepository.findLatestByEntityId(tenantId, poId);
+    : await ReviewRepository.findLatestByEntityId(tenantId, poId!);
 
-  const allReviews = await ReviewRepository.findByEntityId(tenantId, poId);
+  const allReviews = await ReviewRepository.findByEntityId(tenantId, poId!);
   const rejectedReview = allReviews.find((r) => r.status === "REJECTED");
 
   // Gate A: Cascading rejection (Rule 6)
   if (rejectedReview) {
     logger.info({ tenantId, poId, reviewId: rejectedReview._id.toString() }, "DeterministicOrchestrator: PO has REJECTED review; terminating");
-    await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "REJECTED", {
+    await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId!, "REJECTED", {
       terminatedAt: new Date(),
       terminationReason: rejectedReview.reason || "Rejected in human review",
       failureReason: rejectedReview.reason || "Rejected in human review"
     });
     await ReviewRepository.rejectOpenReviewsForEntity(
-      tenantId, poId,
+      tenantId, poId!,
       `Cascaded rejection from exception ${rejectedReview._id.toString()}: ${rejectedReview.reason}`
     );
     return {
-      poId, workflowId,
+      poId: poId!, workflowId,
       status: "REJECTED",
       isBusinessException: true,
       validationErrors: [rejectedReview.reason || "Rejected in human review"],
@@ -327,12 +368,28 @@ export async function runDeterministicWorkflow(
     };
   }
 
+  // Detect raw MongoDB status resumption
+  const currentStatus = po.status || "PENDING";
+  const isCheckpointStatus = [
+    "READY_FOR_APPROVAL",
+    "DISCREPANCY_FOUND",
+    "REVIEW_REQUIRED",
+    "NEEDS_APPROVAL",
+    "HUMAN_APPROVED"
+  ].includes(currentStatus);
+
+  const isResume =
+    Boolean((po as any).isResumed) ||
+    isCheckpointStatus ||
+    Boolean(approvedReviewId && review?.status === "APPROVED") ||
+    (allReviews.length > 0 && allReviews.every((r) => r.status === "APPROVED"));
+
   // Gate B: All-approval check (Rule 2)
   const pendingReviews = allReviews.filter((r) => r.status === "PENDING" || r.status === "ESCALATED");
-  if (pendingReviews.length > 0 && !(approvedReviewId && review?.status === "APPROVED")) {
+  if (pendingReviews.length > 0 && !(approvedReviewId && review?.status === "APPROVED") && !isResume) {
     logger.info({ tenantId, poId, pendingCount: pendingReviews.length }, "DeterministicOrchestrator: awaiting all review approvals");
     return {
-      poId, workflowId,
+      poId: poId!, workflowId,
       status: "HUMAN_REVIEW",
       isBusinessException: true,
       validationErrors: pendingReviews.map((r) => r.reason || "Pending human review"),
@@ -341,17 +398,12 @@ export async function runDeterministicWorkflow(
   }
 
   // Gate C: Human-approved sign-off branch (Rule 3)
-  const isHumanApproved =
-    Boolean(approvedReviewId && review?.status === "APPROVED") ||
-    (allReviews.length > 0 && allReviews.every((r) => r.status === "APPROVED")) ||
-    po.status === "HUMAN_APPROVED" ||
-    po.status === "READY_FOR_APPROVAL" ||
-    Boolean((po as any).isResumed);
+  const isHumanApproved = isResume;
 
   if (isHumanApproved) {
     logger.info({ tenantId, poId }, "DeterministicOrchestrator: all exceptions approved; updating PO status");
     const reconciledTax = reconcileTaxFromLineItems(po.lineItems);
-    await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId, "HUMAN_APPROVED", {
+    await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId!, "HUMAN_APPROVED", {
       extractionConfidence: 1.0,
       humanReviewedAt: new Date(),
       humanReviewedBy: "Human Reviewer",
@@ -627,41 +679,62 @@ function emitStep(options: WorkflowExecutionOptions | undefined, step: string, s
 export const runOrchestrationWorkflow = runDeterministicWorkflow;
 
 /**
+ * Executes post-review downstream pipeline, completely bypassing Agents 1-3.
+ */
+export async function executePostReviewRouting(po: PurchaseOrderEntity): Promise<PurchaseOrderEntity> {
+  console.log(`[Pipeline] ⏩ Post-review routing started for PO ${po.id}`);
+  await runDeterministicWorkflow(po.tenantId, po.id, undefined);
+  const updatedPo = await PurchaseOrderRepository.findById(po.tenantId, po.id);
+  if (updatedPo) {
+    return PurchaseOrderEntity.create({
+      id: updatedPo._id.toString(),
+      tenantId: updatedPo.tenantId,
+      status: mapToEntityStatus(updatedPo.status),
+      vendorName: updatedPo.customerName,
+      totalAmount: updatedPo.totalAmount,
+      baseAmount: updatedPo.subtotal,
+      taxAmount: updatedPo.tax,
+      lineItems: (updatedPo.lineItems || []).map((li: any) => ({
+        description: li.description || li.productCode || "",
+        quantity: li.quantity || 1,
+        unitPrice: li.unitPrice || 0,
+        totalPrice: li.lineTotal || 0
+      })),
+      isResumed: true,
+      version: updatedPo.version || 0
+    });
+  }
+  return po;
+}
+
+/**
  * InvoiceScan DDD Pattern entrypoint: Executes deterministic pipeline
  * with aggregate root encapsulation, checkpoint preservation, and top-level error trapping.
  */
 export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise<PurchaseOrderEntity> {
-  try {
-    // ------------------------------------------------------------------------
-    // RESUMPTION CHECKPOINT DEFENSE (Prevents overwriting user corrections)
-    // ------------------------------------------------------------------------
-    if (po.isResumed || po.status === "READY_FOR_APPROVAL" || (po.status as string) === "HUMAN_APPROVED" || po.status === "DISCREPANCY_FOUND") {
-      console.log(`[Pipeline] ⏩ RESUMING PO ${po.id} directly from checkpoint gate. Skipping Agents 1-3.`);
-      logger.info({ poId: po.id }, `[Pipeline] ⏩ RESUMING PO ${po.id} directly from checkpoint gate. Skipping Agents 1-3.`);
-      await runDeterministicWorkflow(po.tenantId, po.id, undefined);
-      const updatedPo = await PurchaseOrderRepository.findById(po.tenantId, po.id);
-      if (updatedPo) {
-        return PurchaseOrderEntity.create({
-          id: updatedPo._id.toString(),
-          tenantId: updatedPo.tenantId,
-          status: mapToEntityStatus(updatedPo.status),
-          vendorName: updatedPo.customerName,
-          totalAmount: updatedPo.totalAmount,
-          baseAmount: updatedPo.subtotal,
-          taxAmount: updatedPo.tax,
-          lineItems: (updatedPo.lineItems || []).map((li: any) => ({
-            description: li.description || li.productCode || "",
-            quantity: li.quantity || 1,
-            unitPrice: li.unitPrice || 0,
-            totalPrice: li.lineTotal || 0
-          })),
-          isResumed: true,
-          version: updatedPo.version || 0
-        });
-      }
-      return po;
-    }
+  console.log(`\n==================================================`);
+  console.log(`[Pipeline Execution] PO ID: ${po.id}`);
+  console.log(`[Pipeline Execution] Status: "${po.status}" | isResumed: ${po.isResumed}`);
+  console.trace(`[Pipeline Callstack Trace]`);
+  console.log(`==================================================\n`);
 
+  const isCheckpointStatus = [
+    "DISCREPANCY_FOUND",
+    "REVIEW_REQUIRED",
+    "READY_FOR_APPROVAL",
+    "NEEDS_APPROVAL",
+    "HUMAN_REVIEW",
+    "HUMAN_APPROVED"
+  ].includes(po.status);
+
+  // HARD RESUMPTION DEFENSE: Skip OCR/Catalog/Math if resuming or in review
+  if (po.isResumed || isCheckpointStatus) {
+    console.log(`[Pipeline] ⏩ FORCE RESUME TRIGGERED for PO ${po.id}. Bypassing Agents 1-3 (OCR/Catalog/Math).`);
+    return await executePostReviewRouting(po);
+  }
+
+  // Standard processing for fresh uploads below...
+  try {
     po.startProcessing();
     await runDeterministicWorkflow(po.tenantId, po.id);
     const updatedPo = await PurchaseOrderRepository.findById(po.tenantId, po.id);
