@@ -106,6 +106,7 @@ export interface IPurchaseOrder extends Document {
   poNumber: string;
   customerId?: string;
   customerName: string;
+  vendorName?: string;
   gstNumber: string;
   status: POStatus;
   currency: string;
@@ -121,11 +122,15 @@ export interface IPurchaseOrder extends Document {
   tax: number;
   discount: number;
   totalAmount: number;
+  baseAmount?: number;
+  taxAmount?: number;
+  isResumed?: boolean;
   extractionConfidence: number;
   governingContractId?: string;
   lineItems: IPOLineItem[];
   retryCount: number;
   failureReason?: string;
+  rejectionReason?: string;
   workflowId?: string;
   humanReviewedAt?: Date;
   humanReviewedBy?: string;
@@ -152,17 +157,21 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       type: String,
       enum: [
         "UPLOADED",
+        "PENDING",
         "PROCESSING",
         "EXTRACTED",
         "VALIDATING",
         "RAG_CHECKING",
         "COMPLIANCE_CHECKING",
+        "DISCREPANCY_FOUND",
+        "READY_FOR_APPROVAL",
         "HUMAN_REVIEW",
         "HUMAN_APPROVED",
         "APPROVED",
         "REJECTED",
         "INVOICE_GENERATING",
         "INVOICE_VALIDATING",
+        "VALIDATION_FAILED",
         "COMPLETED",
         "FAILED",
         "DELETED"
@@ -179,10 +188,15 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
     documentSize: { type: Number, required: true },
     contentType: { type: String, required: true },
     ocrResultKey: { type: String },
+    vendorName: { type: String },
     subtotal: { type: Number, default: 0 },
     tax: { type: Number, default: 0 },
     discount: { type: Number, default: 0 },
     totalAmount: { type: Number, default: 0 },
+    baseAmount: { type: Number },
+    taxAmount: { type: Number },
+    isResumed: { type: Boolean, default: false },
+    rejectionReason: { type: String },
     extractionConfidence: { type: Number, default: 1.0 },
     governingContractId: { type: String },
     lineItems: [POLineItemSchema],

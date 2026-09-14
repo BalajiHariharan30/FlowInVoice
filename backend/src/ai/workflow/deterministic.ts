@@ -189,8 +189,13 @@ export const shouldContinueAfterExtraction = (state: WorkflowState): "matching" 
  */
 export function calculateResumeStage(
   review?: { stage?: string; checkpointStep?: string; requestedByAgent?: string } | null,
-  persistedStep?: string
+  persistedStep?: string,
+  poStatus?: string
 ): "matching" | "poValidation" | "policyEvaluation" | "approvalDecision" | "posting" {
+  if (poStatus === "READY_FOR_APPROVAL") {
+    return "policyEvaluation";
+  }
+
   const step =
     review?.checkpointStep ||
     persistedStep ||
@@ -339,7 +344,9 @@ export async function runDeterministicWorkflow(
   const isHumanApproved =
     Boolean(approvedReviewId && review?.status === "APPROVED") ||
     (allReviews.length > 0 && allReviews.every((r) => r.status === "APPROVED")) ||
-    po.status === "HUMAN_APPROVED";
+    po.status === "HUMAN_APPROVED" ||
+    po.status === "READY_FOR_APPROVAL" ||
+    Boolean((po as any).isResumed);
 
   if (isHumanApproved) {
     logger.info({ tenantId, poId }, "DeterministicOrchestrator: all exceptions approved; updating PO status");
@@ -385,7 +392,7 @@ export async function runDeterministicWorkflow(
   let state: PipelineState = makeInitialState(tenantId, poId, workflowId, po, isHumanApproved);
 
   const resumeStage = isHumanApproved
-    ? calculateResumeStage(review as any, persistedState?.currentStep)
+    ? calculateResumeStage(review as any, persistedState?.currentStep, po.status)
     : "intake";
 
   if (persistedState && !(persistedState as any).completed) {
@@ -629,7 +636,8 @@ export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise
     // RESUMPTION CHECKPOINT DEFENSE (Prevents overwriting user corrections)
     // ------------------------------------------------------------------------
     if (po.isResumed || po.status === "READY_FOR_APPROVAL" || (po.status as string) === "HUMAN_APPROVED" || po.status === "DISCREPANCY_FOUND") {
-      logger.info({ poId: po.id }, `[Pipeline] Resuming PO ${po.id} from checkpoint gate.`);
+      console.log(`[Pipeline] ⏩ RESUMING PO ${po.id} directly from checkpoint gate. Skipping Agents 1-3.`);
+      logger.info({ poId: po.id }, `[Pipeline] ⏩ RESUMING PO ${po.id} directly from checkpoint gate. Skipping Agents 1-3.`);
       await runDeterministicWorkflow(po.tenantId, po.id, undefined);
       const updatedPo = await PurchaseOrderRepository.findById(po.tenantId, po.id);
       if (updatedPo) {
