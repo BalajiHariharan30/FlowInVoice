@@ -5,6 +5,7 @@ import { connectDatabase } from "./config/database.js";
 import { QdrantService } from "./rag/qdrant.service.js";
 import { QueueManager } from "./workers/queue.js";
 import { isDbConnected } from "./repositories/base.js";
+import { startKeepAlivePing } from "./workers/keep-alive.js";
 
 // Safety net: log unhandled promise rejections without crashing the server
 process.on("unhandledRejection", (reason: unknown) => {
@@ -51,6 +52,11 @@ async function bootstrap() {
         ERP_PROVIDER: process.env.ERP_PROVIDER || "sandbox",
         DATABASE: isDbConnected() ? "MongoDB Atlas (Live)" : "In-Memory Fallback"
       }, "=== Active Production System Providers ===");
+
+      // Start keep-alive self-ping worker on production deployments or Render
+      if (process.env.NODE_ENV === "production" || process.env.RENDER || process.env.RENDER_EXTERNAL_URL) {
+        startKeepAlivePing();
+      }
     });
   } catch (error: any) {
     logger.error({ err: error, message: error?.message, stack: error?.stack }, "Failed to start server");

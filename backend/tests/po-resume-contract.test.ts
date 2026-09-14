@@ -236,4 +236,76 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
     const updatedPO = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
     expect(["APPROVED", "COMPLETED"]).toContain(updatedPO?.status);
   });
+
+  it("5. Synchronous Inline Fallback Engine executes when BullMQ queue fails or drops", async () => {
+    await ProductRepository.create(tenantId, {
+      sku: "SKU-SYNC-FALLBACK",
+      name: "Sync Fallback Product",
+      basePrice: 850.0
+    });
+
+    const po = await PurchaseOrderRepository.create(tenantId, {
+      poNumber: "PO-RESUME-005",
+      customerName: "Sync Fallback Systems",
+      vendorName: "Sync Fallback Systems",
+      gstNumber: "27AABCU9603R1ZM",
+      currency: "INR",
+      status: "HUMAN_REVIEW",
+      subtotal: 850.0,
+      tax: 153.0,
+      discount: 0,
+      totalAmount: 1003.0,
+      lineItems: [
+        {
+          lineNumber: 1,
+          productCode: "SKU-SYNC-FALLBACK",
+          description: "Sync Fallback Product",
+          quantity: 1,
+          unitPrice: 850.0,
+          lineTotal: 850.0,
+          taxRate: 18.0
+        }
+      ]
+    });
+
+    // Simulate BullMQ/QueueManager drop/failure
+    vi.spyOn(QueueManager, "addPOResumeJob").mockRejectedValueOnce(
+      new Error("Simulated Redis container drop / queue stall on Render")
+    );
+
+    const res = await request(app)
+      .post(`/api/v1/po/${po._id.toString()}/resume`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        po: {
+          vendorName: "Sync Fallback Systems Corrected",
+          baseAmount: 850.0,
+          taxAmount: 153.0,
+          totalAmount: 1003.0,
+          lineItems: [
+            {
+              lineNumber: 1,
+              productCode: "SKU-SYNC-FALLBACK",
+              description: "Sync Fallback Product",
+              quantity: 1,
+              unitPrice: 850.0,
+              lineTotal: 850.0,
+              taxRate: 18.0
+            }
+          ]
+        }
+      });
+
+    // Fallback executes inline and returns sync execution mode
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.executionMode).toBe("sync");
+    expect(res.body.message).toContain("inline fallback engine");
+    expect(["APPROVED", "COMPLETED"]).toContain(res.body.status);
+
+    // Verify DB state persisted with final synchronous result
+    const updatedPO = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
+    expect(["APPROVED", "COMPLETED"]).toContain(updatedPO?.status);
+    expect(updatedPO?.vendorName).toBe("Sync Fallback Systems Corrected");
+  });
 });
