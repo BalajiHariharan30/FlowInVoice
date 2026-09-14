@@ -63,7 +63,7 @@ export function createApp(): Express {
   app.use(requestIdMiddleware);
 
   // Health check with deployment version tracking & service status
-  app.get("/health", (req: Request, res: Response) => {
+  app.get(["/health", `${env.API_PREFIX}/health`], (req: Request, res: Response) => {
     const queueHealth = QueueManager.getHealthStatus();
     const dbConnected = isDbConnected();
 
