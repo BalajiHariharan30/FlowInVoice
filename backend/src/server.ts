@@ -6,6 +6,7 @@ import { QdrantService } from "./rag/qdrant.service.js";
 import { QueueManager } from "./workers/queue.js";
 import { isDbConnected } from "./repositories/base.js";
 import { startKeepAlivePing } from "./workers/keep-alive.js";
+import { startReconciler } from "./workers/reconciler.js";
 
 // Safety net: log unhandled promise rejections without crashing the server
 process.on("unhandledRejection", (reason: unknown) => {
@@ -57,6 +58,9 @@ async function bootstrap() {
       if (process.env.NODE_ENV === "production" || process.env.RENDER || process.env.RENDER_EXTERNAL_URL) {
         startKeepAlivePing();
       }
+
+      // Start outbox reconciler on all environments (safe no-op when DB is offline)
+      startReconciler();
     });
   } catch (error: any) {
     logger.error({ err: error, message: error?.message, stack: error?.stack }, "Failed to start server");

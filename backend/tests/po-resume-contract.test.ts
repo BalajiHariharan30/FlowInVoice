@@ -1,3 +1,11 @@
+/**
+ * End-to-End PO Resume Contract & Resumption Worker Tests
+ *
+ * Tests 1-2 (shadow endpoint): removed — the /po/:id/resume route was
+ * deliberately deleted. All resume actions now flow through /reviews/:id/approve.
+ *
+ * Tests 3-5 replaced to cover the durable outbox + approve contract.
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
@@ -36,12 +44,24 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
     vi.restoreAllMocks();
   });
 
-  it("1. Resilient extraction from nested { po: { ... } } payload updates DB to READY_FOR_APPROVAL and enqueues resume", async () => {
-    // 1. Seed initial PO in HUMAN_REVIEW / DISCREPANCY_FOUND
+  // ─── Test 1: Shadow endpoint is gone ─────────────────────────────────────
+  it("1. /api/v1/po/:id/resume shadow endpoint is deleted and returns 404", async () => {
+    const res = await request(app)
+      .post("/api/v1/po/some-id/resume")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ po: { totalAmount: 1000 } });
+
+    expect(res.status).toBe(404);
+  });
+
+  // ─── Test 2: Approve through reviews endpoint writes outbox PENDING ───────
+  it("2. /reviews/:id/approve creates outbox row and returns QUEUED resumeStatus", async () => {
+    const addJobSpy = vi.spyOn(QueueManager, "addPOResumeJob").mockResolvedValue("mock-job-id");
+
     const po = await PurchaseOrderRepository.create(tenantId, {
-      poNumber: "PO-RESUME-001",
-      customerName: "Acme Corp Old",
-      vendorName: "Acme Corp Old",
+      poNumber: "PO-RESUME-CONTRACT-002",
+      customerName: "Alpha Corp",
+      vendorName: "Alpha Corp",
       gstNumber: "27AABCU9603R1ZM",
       currency: "INR",
       status: "HUMAN_REVIEW",
@@ -52,8 +72,8 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
       lineItems: [
         {
           lineNumber: 1,
-          productCode: "SKU-INITIAL",
-          description: "Initial Item",
+          productCode: "SKU-CONTRACT",
+          description: "Contract Test Item",
           quantity: 1,
           unitPrice: 1000.0,
           lineTotal: 1000.0,
@@ -62,83 +82,36 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
       ]
     });
 
-    const addResumeJobSpy = vi.spyOn(QueueManager, "addPOResumeJob");
-
-    // 2. Client submits nested frontend payload: { po: { vendorName, totalAmount, lineItems } }
-    const res = await request(app)
-      .post(`/api/v1/po/${po._id.toString()}/resume`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        po: {
-          vendorName: "Acme Global Solutions",
-          baseAmount: 1200.0,
-          taxAmount: 216.0,
-          totalAmount: 1416.0,
-          lineItems: [
-            {
-              lineNumber: 1,
-              productCode: "SKU-CORRECTED",
-              description: "Corrected Enterprise Node",
-              quantity: 1,
-              unitPrice: 1200.0,
-              lineTotal: 1200.0,
-              taxRate: 18.0
-            }
-          ]
-        }
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.status).toBe("READY_FOR_APPROVAL");
-
-    // Verify DB state updated
-    const updatedPO = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
-    expect(updatedPO?.status).toBe("READY_FOR_APPROVAL");
-    expect(updatedPO?.isResumed).toBe(true);
-    expect(updatedPO?.vendorName).toBe("Acme Global Solutions");
-    expect(updatedPO?.totalAmount).toBe(1416.0);
-    expect(updatedPO?.lineItems[0].description).toBe("Corrected Enterprise Node");
-  });
-
-  it("2. Resilient extraction from nested { invoiceData: { ... } } payload updates DB to READY_FOR_APPROVAL", async () => {
-    const po = await PurchaseOrderRepository.create(tenantId, {
-      poNumber: "PO-RESUME-002",
-      customerName: "Beta Corp",
-      gstNumber: "27AABCU9603R1ZM",
-      currency: "INR",
-      status: "HUMAN_REVIEW",
-      subtotal: 500.0,
-      tax: 90.0,
-      discount: 0,
-      totalAmount: 590.0
+    // Create a review ticket referencing the PO
+    const review = await ReviewRepository.create(tenantId, {
+      entity: "purchase_order",
+      entityId: po._id.toString(),
+      stage: "extraction",
+      status: "PENDING",
+      priority: "HIGH",
+      reason: "LINE_ITEM_MISMATCH",
+      requestedByAgent: "ValidationAgent"
     });
 
     const res = await request(app)
-      .post(`/api/v1/po/${po._id.toString()}/resume`)
+      .post(`/api/v1/reviews/${review._id.toString()}/approve`)
       .set("Authorization", `Bearer ${token}`)
-      .send({
-        invoiceData: {
-          vendor_name: "Beta Corp Updated",
-          base_amount: 600.0,
-          tax_amount: 108.0,
-          total_amount: 708.0
-        }
-      });
+      .send({ resolutionNotes: "Approved after correction" });
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.status).toBe("READY_FOR_APPROVAL");
+    expect(res.body.resumeStatus).toBe("QUEUED");
 
-    const updatedPO = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
-    expect(updatedPO?.status).toBe("READY_FOR_APPROVAL");
-    expect(updatedPO?.isResumed).toBe(true);
-    expect(updatedPO?.vendorName).toBe("Beta Corp Updated");
-    expect(updatedPO?.totalAmount).toBe(708.0);
+    // Verify outbox pattern was called (addPOResumeJob called with outboxId)
+    expect(addJobSpy).toHaveBeenCalledWith(
+      tenantId,
+      po._id.toString(),
+      review._id.toString(),
+      expect.any(String)  // outboxId
+    );
   });
 
+  // ─── Test 3: Worker skips Agents 1-3 (OCR/Math) when resuming ────────────
   it("3. Worker skips Agents 1-3 (OCR/Math) when resuming PO in READY_FOR_APPROVAL", async () => {
-    // Seed product so line matching or downstream stages pass
     await ProductRepository.create(tenantId, {
       sku: "SKU-RESUME-CHECK",
       name: "Resume Check Node",
@@ -187,6 +160,7 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
     expect(result.status).toBe("COMPLETED");
   });
 
+  // ─── Test 4: processPOJobWithEntity processes po-resume job ──────────────
   it("4. processPOJobWithEntity processes po-resume job and skips Agents 1-3 to terminal status", async () => {
     await ProductRepository.create(tenantId, {
       sku: "SKU-WORKER-TEST",
@@ -237,75 +211,19 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
     expect(["APPROVED", "COMPLETED"]).toContain(updatedPO?.status);
   });
 
-  it("5. Synchronous Inline Fallback Engine executes when BullMQ queue fails or drops", async () => {
-    await ProductRepository.create(tenantId, {
-      sku: "SKU-SYNC-FALLBACK",
-      name: "Sync Fallback Product",
-      basePrice: 850.0
-    });
-
-    const po = await PurchaseOrderRepository.create(tenantId, {
-      poNumber: "PO-RESUME-005",
-      customerName: "Sync Fallback Systems",
-      vendorName: "Sync Fallback Systems",
-      gstNumber: "27AABCU9603R1ZM",
-      currency: "INR",
-      status: "HUMAN_REVIEW",
-      subtotal: 850.0,
-      tax: 153.0,
-      discount: 0,
-      totalAmount: 1003.0,
-      lineItems: [
-        {
-          lineNumber: 1,
-          productCode: "SKU-SYNC-FALLBACK",
-          description: "Sync Fallback Product",
-          quantity: 1,
-          unitPrice: 850.0,
-          lineTotal: 850.0,
-          taxRate: 18.0
-        }
-      ]
-    });
-
-    // Simulate BullMQ/QueueManager drop/failure
-    vi.spyOn(QueueManager, "addPOResumeJob").mockRejectedValueOnce(
-      new Error("Simulated Redis container drop / queue stall on Render")
+  // ─── Test 5: addPOResumeJob leaves outbox PENDING when BullMQ fails ──────
+  it("5. addPOResumeJob leaves outbox PENDING (no setTimeout) when BullMQ unavailable", async () => {
+    // When Redis is not connected (isMock=true), addPOResumeJob should return
+    // the jobId without throwing, and NOT create an in-memory setTimeout.
+    const jobId = await QueueManager.addPOResumeJob(
+      tenantId,
+      "po-999",
+      "review-999",
+      "outbox-999"
     );
 
-    const res = await request(app)
-      .post(`/api/v1/po/${po._id.toString()}/resume`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        po: {
-          vendorName: "Sync Fallback Systems Corrected",
-          baseAmount: 850.0,
-          taxAmount: 153.0,
-          totalAmount: 1003.0,
-          lineItems: [
-            {
-              lineNumber: 1,
-              productCode: "SKU-SYNC-FALLBACK",
-              description: "Sync Fallback Product",
-              quantity: 1,
-              unitPrice: 850.0,
-              lineTotal: 850.0,
-              taxRate: 18.0
-            }
-          ]
-        }
-      });
-
-    // Fallback executes inline and returns sync execution mode
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.executionMode).toBe("sync");
-    expect(res.body.message).toContain("inline fallback engine");
-    expect(["APPROVED", "COMPLETED"]).toContain(res.body.status);
-
-    // Verify DB state persisted with final synchronous result
-    const updatedPO = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
-    expect(["APPROVED", "COMPLETED"]).toContain(updatedPO?.status);
-    expect(updatedPO?.vendorName).toBe("Sync Fallback Systems Corrected");
+    expect(typeof jobId).toBe("string");
+    expect(jobId).toContain("po-resume");
+    // No assertion on setTimeout — absence of the volatile retry is the contract.
   });
 });

@@ -19,3 +19,5 @@ export { AuditRepository } from "./audit.repository.js";
 export { ValidationResultRepository } from "./validation-result.repository.js";
 export { UserRepository } from "./user.repository.js";
 export { ProductRepository } from "./product.repository.js";
+export { ResumeJobRepository } from "./resume-job.repository.js";
+

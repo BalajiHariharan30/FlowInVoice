@@ -3,6 +3,31 @@ import { authenticate } from "../../auth/auth.middleware.js";
 import { PurchaseOrder, Invoice, HumanReview } from "../../models/index.js";
 import { inMemory, isDbConnected } from "../../repositories/base.js";
 
+/**
+ * STATUS_CATEGORY — single source of truth for how PO statuses map to
+ * dashboard buckets. Add new statuses here; no other file needs editing.
+ */
+const STATUS_CATEGORY = {
+  approved: [
+    "APPROVED",
+    "HUMAN_APPROVED",        // ← was previously missing, causing count bug
+    "INVOICE_GENERATING",
+    "INVOICE_VALIDATING",
+    "COMPLETED"
+  ],
+  processing: [
+    "PROCESSING",
+    "EXTRACTED",
+    "VALIDATION_FAILED",
+    "DISCREPANCY_FOUND",
+    "REVIEW_REQUIRED",
+    "READY_FOR_APPROVAL",
+    "NEEDS_APPROVAL",
+    "HUMAN_REVIEW"
+  ],
+  pending: ["PENDING"]
+} as const;
+
 export const dashboardRouter = Router();
 
 dashboardRouter.use(authenticate);
@@ -26,7 +51,7 @@ dashboardRouter.get("/summary", async (req: Request, res: Response, next: NextFu
                 totalPOs: { $sum: 1 },
                 approvedPOs: {
                   $sum: {
-                    $cond: [{ $in: ["$status", ["APPROVED", "INVOICE_GENERATING", "INVOICE_VALIDATING", "COMPLETED"]] }, 1, 0]
+                    $cond: [{ $in: ["$status", STATUS_CATEGORY.approved] }, 1, 0]
                   }
                 },
                 avgConfidence: { $avg: "$extractionConfidence" }
@@ -63,7 +88,7 @@ dashboardRouter.get("/summary", async (req: Request, res: Response, next: NextFu
     // In-memory fallback
     const tenantPOs = Array.from(inMemory.pos.values()).filter((p: any) => p.tenantId === tenantId);
     const approvedPOs = tenantPOs.filter((p: any) =>
-      ["APPROVED", "INVOICE_GENERATING", "INVOICE_VALIDATING", "COMPLETED"].includes(p.status)
+      STATUS_CATEGORY.approved.includes(p.status)
     ).length;
     const avgConfidence =
       tenantPOs.length > 0

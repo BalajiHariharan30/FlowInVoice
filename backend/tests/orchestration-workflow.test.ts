@@ -518,12 +518,10 @@ describe("LangGraph Workflow Orchestration (§Hardened Master Spec)", () => {
       expect(res.body.status).toBe("APPROVED");
       expect(res.body.resolutionNotes).toBe("Reviewer verified physical invoice paper copy");
 
-      // Give async setImmediate workflow time to complete (including S3 upload latency)
-      for (let i = 0; i < 30; i++) {
-        const checkPo = await PurchaseOrderRepository.findById("tenant_alpha", poId);
-        if (checkPo?.status === "COMPLETED") break;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      // BullMQ is mocked in tests — simulate what the worker does by running
+      // the pipeline directly (approve enqueues; we drive it here).
+      const { runDeterministicWorkflow } = await import("../src/ai/workflow/deterministic.js");
+      await runDeterministicWorkflow("tenant_alpha", poId, {});
 
       // Verify PO updated with corrected line items and workflow completed successfully
       const updatedPo = await PurchaseOrderRepository.findById("tenant_alpha", poId);

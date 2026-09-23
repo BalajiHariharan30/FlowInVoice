@@ -6,6 +6,7 @@ import {
   PurchaseOrderRepository,
   InvoiceRepository,
   AuditRepository,
+  ResumeJobRepository,
   reconcileTaxFromLineItems
 } from "../../repositories/index.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
@@ -286,21 +287,36 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
           totalAmount
         });
 
-        await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, review.entityId, "HUMAN_APPROVED", {
-          extractionConfidence: 1.0,
-          humanReviewedAt: new Date(),
-          humanReviewedBy: req.user!.email,
-          ...(reconciledTax !== null ? { tax: reconciledTax } : {})
-        });
+        // Atomically write: PO → HUMAN_APPROVED  +  outbox row (PENDING)
+        // in a single MongoDB session so they can never be inconsistent.
+        const outboxId = await ResumeJobRepository.createWithTransaction(
+          tenantId,
+          review.entityId,
+          review._id.toString(),
+          async (session) => {
+            await PurchaseOrderRepository.updateHumanReviewStatus(
+              tenantId,
+              review.entityId,
+              "HUMAN_APPROVED",
+              {
+                extractionConfidence: 1.0,
+                humanReviewedAt: new Date(),
+                humanReviewedBy: req.user!.email,
+                ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+              }
+            );
+          }
+        );
 
-        // Do NOT await the pipeline inline — that's what caused the crash.
-        // Enqueue it; retries and crash-survival are handled by QueueManager.
+        // Fast path: try BullMQ; on success mark row ENQUEUED.
+        // On failure: leave row PENDING — reconciler will pick it up.
         const resumeJobId = await QueueManager.addPOResumeJob(
           tenantId,
           review.entityId,
-          review._id.toString()
+          review._id.toString(),
+          outboxId   // <-- pass outboxId so queue.ts can mark it ENQUEUED
         );
-        logger.info({ tenantId, poId: review.entityId, resumeJobId }, "Queued pipeline resume after approval");
+        logger.info({ tenantId, poId: review.entityId, resumeJobId, outboxId }, "Queued pipeline resume after approval");
       }
     }
   } else if (review.stage === "invoice") {

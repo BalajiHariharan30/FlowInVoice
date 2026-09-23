@@ -301,8 +301,10 @@ describe("Workflow Loop, State, Queue & Agent Remediation Test Suite", () => {
 
     expect(approveRes.status).toBe(200);
 
-    // Wait for in-memory async resume queue worker to run
-    await new Promise((r) => setTimeout(r, 800));
+    // BullMQ is mocked in tests — simulate what the worker would do by running
+    // the pipeline directly (the approve handler enqueues; we drive it here).
+    const { runDeterministicWorkflow } = await import("../src/ai/workflow/deterministic.js");
+    await runDeterministicWorkflow(tenantId, po._id.toString(), {});
 
     // Verify all reviews for this entity: exactly 1 review exists, and its status is APPROVED!
     const allReviews = await ReviewRepository.findByEntityId(tenantId, po._id.toString());

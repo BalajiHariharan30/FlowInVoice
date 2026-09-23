@@ -599,3 +599,43 @@ export const ValidationResult = mongoose.model<IValidationResult>("ValidationRes
 export const AuditLog = mongoose.model<IAuditLog>("AuditLog", AuditLogSchema);
 export const User = mongoose.model<IUser>("User", UserSchema);
 export const Product = mongoose.model<IProduct>("Product", ProductSchema);
+
+// -------------------------------------------------------------
+// 10. ResumeJob Outbox — durable job persistence for BullMQ fallback
+// -------------------------------------------------------------
+export type ResumeJobStatus = "PENDING" | "ENQUEUED" | "PROCESSING" | "DONE" | "FAILED";
+
+export interface IResumeJob extends Document {
+  tenantId: string;
+  poId: string;
+  reviewId: string;
+  status: ResumeJobStatus;
+  attempts: number;
+  lastError: string | null;
+  processingLock: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const ResumeJobSchema = new Schema<IResumeJob>(
+  {
+    tenantId: { type: String, required: true, index: true },
+    poId: { type: String, required: true, index: true },
+    reviewId: { type: String, required: true },
+    status: {
+      type: String,
+      enum: ["PENDING", "ENQUEUED", "PROCESSING", "DONE", "FAILED"],
+      default: "PENDING",
+      index: true
+    },
+    attempts: { type: Number, default: 0 },
+    lastError: { type: String, default: null },
+    processingLock: { type: Date, default: null }
+  },
+  { timestamps: true }
+);
+// One active outbox row per PO (prevents duplicates at the write path)
+ResumeJobSchema.index({ tenantId: 1, poId: 1, status: 1 });
+
+export const ResumeJob = mongoose.model<IResumeJob>("ResumeJob", ResumeJobSchema);
+

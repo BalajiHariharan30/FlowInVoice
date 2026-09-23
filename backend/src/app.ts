@@ -14,7 +14,6 @@ import { dashboardRouter } from "./api/routes/dashboard.routes.js";
 import { userRouter } from "./api/routes/user.routes.js";
 import { auditRouter } from "./api/routes/audit.routes.js";
 import { storageRouter } from "./api/routes/storage.routes.js";
-import poResumeRouter from "./api/routes/po-resume.route.js";
 import openApiSpec from "./api/openapi.json";
 import { QueueManager } from "./workers/queue.js";
 import { isDbConnected } from "./repositories/base.js";
@@ -117,7 +116,6 @@ export function createApp(): Express {
   apiRouter.use("/users", userRouter);
   apiRouter.use("/audit", auditRouter);
   apiRouter.use("/storage", storageRouter);
-  apiRouter.use(poResumeRouter);
 
   app.use(env.API_PREFIX, apiRouter);
 

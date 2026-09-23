@@ -3,7 +3,7 @@ import Redis, { RedisOptions } from "ioredis";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
 import { runOrchestrationWorkflow } from "../ai/workflow/index.js";
-import { PurchaseOrderRepository, ReviewRepository } from "../repositories/index.js";
+import { PurchaseOrderRepository, ReviewRepository, ResumeJobRepository } from "../repositories/index.js";
 import { PurchaseOrderModel } from "../models/purchase-order.model.js";
 import { PurchaseOrderEntity, mapToEntityStatus } from "../domain/entities/purchase-order.entity.js";
 import { runDeterministicPipeline } from "../ai/workflow/deterministic.js";
@@ -87,7 +87,6 @@ export class QueueManager {
   private static reconnectTimer: NodeJS.Timeout | null = null;
   private static lastError: string | null = null;
   private static connectAttempts: number = 0;
-  private static activeResumeJobs: Set<string> = new Set<string>();
   private static activeProcessingJobs: Set<string> = new Set<string>();
 
   static async initialize(): Promise<void> {
@@ -383,14 +382,19 @@ export class QueueManager {
   }
 
   /**
-   * Enqueues the post-approval pipeline resume. Never runs inline on the
-   * HTTP request — this is the fix for the approve-endpoint crash. With
-   * BullMQ available, retries (3 attempts, exponential backoff) are handled
-   * by BullMQ itself and survive a process crash since state lives in Redis.
-   * Without Redis, we retry in-process ourselves so the same safety net
-   * still applies, just without crash-survival.
+   * Enqueues the post-approval pipeline resume.
+   * Accepts an optional outboxId — if provided, marks the outbox row
+   * ENQUEUED on success or leaves it PENDING on failure (reconciler picks up).
+   *
+   * The in-memory setTimeout fallback has been removed: it was volatile and
+   * silently lost jobs on server restart/redeploy.
    */
-  static async addPOResumeJob(tenantId: string, poId: string, approvedReviewId: string): Promise<string> {
+  static async addPOResumeJob(
+    tenantId: string,
+    poId: string,
+    approvedReviewId: string,
+    outboxId?: string
+  ): Promise<string> {
     const jobId = `po-resume-${tenantId}-${poId}-${approvedReviewId}`;
 
     if (!this.isMock && this.poQueue) {
@@ -405,51 +409,34 @@ export class QueueManager {
           }
         );
         logger.info({ jobId, queue: "po-processing" }, "Successfully enqueued PO resume job to BullMQ");
+
+        // Mark outbox row ENQUEUED so the reconciler skips it
+        if (outboxId) {
+          await ResumeJobRepository.markEnqueued(outboxId).catch((e) =>
+            logger.warn({ err: e.message, outboxId }, "Could not mark outbox row ENQUEUED (non-fatal)")
+          );
+        }
         return jobId;
       } catch (err: any) {
-        logger.warn({ err: err.message, jobId }, "BullMQ resume enqueue failed, executing with asynchronous runner");
+        // === OBSERVABILITY ALERT ===
+        // TODO: wire to Sentry/Slack/PagerDuty when monitoring is configured
+        logger.error(
+          { err: err.message, jobId, outboxId, tenantId, poId },
+          "[ALERT] BullMQ resume enqueue FAILED — outbox row left PENDING for reconciler pickup"
+        );
+        if (outboxId) {
+          await ResumeJobRepository.markEnqueueFailed(outboxId, err.message).catch(() => {});
+        }
+        // Do NOT fall back to in-memory setTimeout — that loses jobs on restart.
+        return jobId;
       }
     }
 
-    if (this.activeResumeJobs.has(jobId)) {
-      logger.info({ jobId }, "Async Queue: Resume job is already active, merging duplicate execution");
-      return jobId;
-    }
-    this.activeResumeJobs.add(jobId);
-
-    const MAX_ATTEMPTS = 3;
-    const runWithRetry = async (attempt: number): Promise<void> => {
-      try {
-        const po = await PurchaseOrderRepository.findById(tenantId, poId);
-        if (!po || ["REJECTED", "DELETED", "COMPLETED"].includes(po.status)) {
-          logger.info({ poId, status: po?.status }, "Async Queue: Skipping resume execution for terminal PO");
-          this.activeResumeJobs.delete(jobId);
-          return;
-        }
-
-        const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
-        logger.info({ tenantId, poId, jobId, attempt }, "Async Queue: Starting PO resume workflow");
-        await runOrchestrationWorkflow(tenantId, poId, undefined, approvedReviewId);
-        this.activeResumeJobs.delete(jobId);
-      } catch (e: any) {
-        logger.error({ e: e.message, tenantId, poId, attempt }, "Async PO resume error");
-
-        const isPermanentError =
-          e?.code === "DUPLICATE_PO_NUMBER" ||
-          e?.message?.includes("PO not found") ||
-          e?.message?.includes("invalid schema");
-
-        if (isPermanentError || attempt >= MAX_ATTEMPTS) {
-          this.activeResumeJobs.delete(jobId);
-          const { handleResumeExhausted } = await import("../ai/workflow/resume-failure-handler.js");
-          await handleResumeExhausted(tenantId, poId, approvedReviewId, e);
-        } else {
-          setTimeout(() => runWithRetry(attempt + 1), Math.pow(2, attempt) * 1000);
-        }
-      }
-    };
-    setTimeout(() => runWithRetry(1), 300);
-
+    // Redis not connected at all — outbox row already PENDING; reconciler handles it.
+    logger.warn(
+      { jobId, outboxId, tenantId, poId },
+      "[ALERT] BullMQ unavailable — resume job left in outbox PENDING for reconciler"
+    );
     return jobId;
   }
 }
