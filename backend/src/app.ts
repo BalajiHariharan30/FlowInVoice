@@ -62,15 +62,16 @@ export function createApp(): Express {
   app.use(requestIdMiddleware);
 
   // Health check with deployment version tracking & service status
-  app.get(["/health", `${env.API_PREFIX}/health`], (req: Request, res: Response) => {
+  const handleHealth = (req: Request, res: Response) => {
     const queueHealth = QueueManager.getHealthStatus();
     const dbConnected = isDbConnected();
+    const deploymentVersion = process.env.DEPLOY_VERSION || "2.0.0";
 
     // If REQUIRE_REDIS is true and Redis is not connected, report 503 Unhealthy
     if (env.REQUIRE_REDIS && queueHealth.status !== "connected") {
       return res.status(503).json({
         status: "unhealthy",
-        version: "1.0.5",
+        version: deploymentVersion,
         services: {
           database: { status: dbConnected ? "connected" : "disconnected", provider: "mongodb" },
           redis: queueHealth
@@ -84,7 +85,7 @@ export function createApp(): Express {
 
     res.status(200).json({
       status: overallStatus,
-      version: "1.0.5",
+      version: deploymentVersion,
       services: {
         database: { status: dbConnected ? "connected" : "disconnected", provider: "mongodb" },
         redis: queueHealth
@@ -97,8 +98,9 @@ export function createApp(): Express {
       },
       timestamp: new Date().toISOString()
     });
-  });
+  };
 
+  app.get("/health", handleHealth);
 
   // OpenAPI spec documentation
   app.get("/api/docs/openapi.json", (req: Request, res: Response) => {
@@ -107,6 +109,7 @@ export function createApp(): Express {
 
   // Mount API Contract Routes at /api/v1
   const apiRouter = express.Router();
+  apiRouter.get("/health", handleHealth);
   apiRouter.use("/auth", authRouter);
   apiRouter.use("/pos", poRouter);
   apiRouter.use("/invoices", invoiceRouter);
