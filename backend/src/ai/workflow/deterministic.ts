@@ -764,3 +764,24 @@ export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise
     return po;
   }
 }
+
+/**
+ * Synchronous inline fallback: resumes an approved PO's pipeline directly
+ * when queue dispatch (BullMQ) fails. Called from the review-approval catch
+ * block so the PO is not stranded until the reconciler's 5-min sweep.
+ */
+export async function executeSynchronousResumeFallback(
+  tenantId: string,
+  poId: string,
+  approvedReviewId: string
+): Promise<void> {
+  logger.info({ tenantId, poId, approvedReviewId }, "executeSynchronousResumeFallback: running inline pipeline resume");
+  try {
+    await runDeterministicWorkflow(tenantId, poId, undefined, approvedReviewId);
+  } catch (err: any) {
+    logger.error(
+      { err: err.message, tenantId, poId, approvedReviewId },
+      "executeSynchronousResumeFallback: inline resume failed — reconciler will recover on next sweep"
+    );
+  }
+}

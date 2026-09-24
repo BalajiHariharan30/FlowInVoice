@@ -11,6 +11,7 @@ import {
 } from "../../repositories/index.js";
 import { ReviewStage, ReviewStatus } from "../../types/index.js";
 import { runOrchestrationWorkflow } from "../../ai/workflow/index.js";
+import { executeSynchronousResumeFallback } from "../../ai/workflow/deterministic.js";
 import { ReanalysisService } from "../../ai/workflow/reanalysis.service.js";
 import { QueueManager } from "../../workers/queue.js";
 import { MoneyUtil } from "../../utils/money.js";
@@ -323,8 +324,10 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
         } catch (queueErr: any) {
           logger.error(
             { err: queueErr.message, tenantId, poId: review.entityId, outboxId },
-            "handleReviewApproval: addPOResumeJob threw unexpectedly — PO is HUMAN_APPROVED; reconciler will recover"
+            "handleReviewApproval: addPOResumeJob failed — falling back to synchronous inline resume"
           );
+          // Immediate inline fallback; reconciler is the final safety net if even this fails
+          await executeSynchronousResumeFallback(tenantId, review.entityId, review._id.toString());
         }
       }
     }
