@@ -158,6 +158,16 @@ export interface DiscrepancyItem {
   message?: string;
 }
 
+export interface StageFinding {
+  id: string;
+  checkType: string;
+  field: string;
+  expected: string;
+  actual: string;
+  message: string;
+  resolved: boolean;
+}
+
 export interface HumanReview {
   id: string;
   entity: "purchase_order" | "invoice";
@@ -170,6 +180,10 @@ export interface HumanReview {
   expectedValue?: string;
   actualValue?: string;
   evidence: EvidenceItem[];
+  /** Structured per-check findings — all errors within a stage, batched. */
+  findings: StageFinding[];
+  /** How many times the workflow resumed and re-hit this stage with errors. */
+  resumeAttempts: number;
   discrepancyReport?: DiscrepancyItem[];
   suggestedFix?: SuggestedFix;
   assignedTo?: string;

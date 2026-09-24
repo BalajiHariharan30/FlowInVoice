@@ -1,5 +1,5 @@
 import { ExtractedPOData } from "../../agents/providers/ocr.provider.js";
-import { EvidenceItem } from "../../types/index.js";
+import { EvidenceItem, StageFinding } from "../../types/index.js";
 
 export interface WorkflowValidationCheck {
   checkName: string;
@@ -60,6 +60,8 @@ export interface WorkflowState {
 
   // Agent 6: Exception / Review ticket
   reviewId?: string;
+  /** Structured per-check findings emitted by validation agents this run cycle. */
+  stageFindings?: StageFinding[];
   isBusinessException: boolean;
 
   // Agent 7: Posting & ERP state

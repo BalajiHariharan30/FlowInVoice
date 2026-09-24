@@ -91,6 +91,8 @@ reviewRouter.get("/:reviewId", async (req: Request, res: Response): Promise<void
     expectedValue: review.expectedValue,
     actualValue: review.actualValue,
     evidence: review.evidence,
+    findings: (review as any).findings || [],
+    resumeAttempts: (review as any).resumeAttempts || 0,
     assignedTo: review.assignedTo,
     resolutionNotes: review.resolutionNotes,
     resolvedBy: review.resolvedBy,

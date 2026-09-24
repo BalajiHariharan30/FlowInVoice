@@ -52,6 +52,28 @@ export interface EvidenceItem {
   claim: string;
 }
 
+/**
+ * A single structured finding produced by a validation stage check.
+ * All checks within a stage are collected into StageFinding[] before
+ * creating or updating a HumanReview — never one finding per review.
+ */
+export interface StageFinding {
+  /** Stable ID: "<stage>:<checkName>:<field>" — used to identify this finding across resume cycles. */
+  id: string;
+  /** The check that produced this finding (e.g. "SUBTOTAL_MATH_CHECK"). */
+  checkType: string;
+  /** The PO field or line item involved (e.g. "subtotal", "line_1_total"). */
+  field: string;
+  /** Human-readable string of the expected value. */
+  expected: string;
+  /** Human-readable string of the actual value found in the document. */
+  actual: string;
+  /** Full human-readable explanation shown to the reviewer. */
+  message: string;
+  /** True once the reviewer has corrected this specific finding (set by approve handler). */
+  resolved: boolean;
+}
+
 export interface DiscrepancyItem {
   nodeId: string;
   field: string;

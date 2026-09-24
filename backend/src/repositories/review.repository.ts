@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import mongoose from "mongoose";
-import { HumanReview, IHumanReview } from "../models/index.js";
+import { HumanReview, IHumanReview, IStageFinding } from "../models/index.js";
 import { PaginationParams, PaginatedResult, ReviewStatus, ReviewStage } from "../types/index.js";
 import { inMemory, isDbConnected, generateId, calcPagination } from "./base.js";
 import { AuditRepository } from "./audit.repository.js";
@@ -231,6 +231,213 @@ export class ReviewRepository {
       .filter((r) => r.tenantId === tenantId && r.entityId === entityId && r.status === "PENDING")
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return items[0] || null;
+  }
+
+  /**
+   * Finds the most recent non-terminal review for a specific (tenantId, entityId, stage).
+   * Non-terminal = PENDING or ESCALATED.
+   */
+  static async findPendingByStage(
+    tenantId: string,
+    entityId: string,
+    stage: ReviewStage
+  ): Promise<IHumanReview | null> {
+    if (isDbConnected()) {
+      return HumanReview.findOne({
+        tenantId,
+        entityId,
+        stage,
+        status: { $in: ["PENDING", "ESCALATED"] }
+      }).sort({ createdAt: -1 });
+    }
+    const items = Array.from(inMemory.reviews.values())
+      .filter(
+        (r) =>
+          r.tenantId === tenantId &&
+          r.entityId === entityId &&
+          r.stage === stage &&
+          (r.status === "PENDING" || r.status === "ESCALATED")
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return items[0] || null;
+  }
+
+  /**
+   * INVARIANT ENFORCEMENT: Maximum one non-terminal review per (tenantId, entityId, stage).
+   *
+   * - If NO review exists for this (poId, stage) or the existing one is terminal (APPROVED/REJECTED):
+   *     • Creates a new PENDING review with the provided findings.
+   * - If a non-terminal (PENDING/ESCALATED) review EXISTS for this (poId, stage):
+   *     • REPLACES its findings array with the new findings (not appended — replaces).
+   *     • Increments resumeAttempts by 1.
+   *     • Updates reason, priority, checkpointStep, evidence.
+   *     • Status stays PENDING (or ESCALATED — not changed).
+   *     • This is the "partial fix approved, resume, still has errors" path.
+   * - If a PREVIOUSLY APPROVED review exists AND new findings exist for the same stage:
+   *     • REOPENS the review: sets status back to PENDING, replaces findings, increments resumeAttempts.
+   *     • This supports the "approve partial fix → same review updated" spec requirement.
+   *
+   * Returns the created or updated IHumanReview document.
+   */
+  static async findOrUpdateStageReview(
+    tenantId: string,
+    data: Partial<IHumanReview> & { findings: IStageFinding[] }
+  ): Promise<IHumanReview> {
+    const stage = data.stage!;
+    const entityId = data.entityId!;
+
+    if (isDbConnected()) {
+      // Look for any existing review for this (poId, stage) — non-terminal first, then most recent
+      let existing = await HumanReview.findOne({
+        tenantId,
+        entityId,
+        stage,
+        status: { $in: ["PENDING", "ESCALATED"] }
+      }).sort({ createdAt: -1 });
+
+      if (!existing) {
+        // Check for the most recent APPROVED review for this stage (reopen path)
+        existing = await HumanReview.findOne({
+          tenantId,
+          entityId,
+          stage,
+          status: "APPROVED"
+        }).sort({ createdAt: -1 }) as any;
+      }
+
+      if (existing) {
+        const wasApproved = existing.status === "APPROVED";
+        const updatePayload: any = {
+          findings: data.findings,
+          reason: data.reason || existing.reason,
+          priority: data.priority || existing.priority,
+          checkpointStep: data.checkpointStep || existing.checkpointStep,
+          actualValue: data.actualValue || existing.actualValue,
+          updatedAt: new Date()
+        };
+        if (data.evidence && data.evidence.length > 0) {
+          updatePayload.evidence = mergeEvidenceArrays(existing.evidence || [], data.evidence as any[]);
+        }
+        if (data.suggestedFix) {
+          updatePayload.suggestedFix = data.suggestedFix;
+        }
+        if (wasApproved) {
+          // Reopen: reset to PENDING, clear resolution fields, increment resumeAttempts
+          updatePayload.status = "PENDING";
+          updatePayload.resolvedAt = undefined;
+          updatePayload.resolvedBy = undefined;
+          updatePayload.resolutionNotes = undefined;
+          updatePayload.resumeAttempts = (existing.resumeAttempts || 0) + 1;
+          logger.info(
+            { tenantId, entityId, stage, resumeAttempts: updatePayload.resumeAttempts },
+            "ReviewRepository.findOrUpdateStageReview: Reopening APPROVED review with new findings after partial fix"
+          );
+        } else {
+          updatePayload.resumeAttempts = (existing.resumeAttempts || 0) + 1;
+          logger.info(
+            { tenantId, entityId, stage, resumeAttempts: updatePayload.resumeAttempts },
+            "ReviewRepository.findOrUpdateStageReview: Updating existing PENDING review with new findings"
+          );
+        }
+        const updated = await HumanReview.findOneAndUpdate(
+          { tenantId, _id: existing._id },
+          { $set: updatePayload },
+          { new: true }
+        );
+        return updated!;
+      }
+
+      // No existing review → create fresh
+      const dedupKey = computeReviewDedupKey(tenantId, data);
+      try {
+        const review = new HumanReview({ ...data, tenantId, dedupKey, resumeAttempts: 0 });
+        return await review.save();
+      } catch (err: any) {
+        if (err.code === 11000) {
+          // Race: concurrent workflow run created the same review
+          const conflict = await HumanReview.findOne({
+            tenantId, entityId, stage, status: { $in: ["PENDING", "ESCALATED"] }
+          }).sort({ createdAt: -1 });
+          if (conflict) {
+            conflict.findings = data.findings as any;
+            conflict.resumeAttempts = (conflict.resumeAttempts || 0) + 1;
+            conflict.updatedAt = new Date();
+            return conflict.save();
+          }
+        }
+        throw err;
+      }
+    }
+
+    // ── In-Memory Mode (tests) ──────────────────────────────────────────────
+    const stage_ = data.stage!;
+
+    let existing = Array.from(inMemory.reviews.values())
+      .filter(
+        (r) =>
+          r.tenantId === tenantId &&
+          r.entityId === entityId &&
+          r.stage === stage_ &&
+          (r.status === "PENDING" || r.status === "ESCALATED")
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
+
+    if (!existing) {
+      // Check for APPROVED (reopen path)
+      existing = Array.from(inMemory.reviews.values())
+        .filter(
+          (r) =>
+            r.tenantId === tenantId &&
+            r.entityId === entityId &&
+            r.stage === stage_ &&
+            r.status === "APPROVED"
+        )
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
+    }
+
+    if (existing) {
+      const wasApproved = existing.status === "APPROVED";
+      (existing as any).findings = data.findings;
+      (existing as any).resumeAttempts = ((existing as any).resumeAttempts || 0) + 1;
+      if (data.reason) existing.reason = data.reason;
+      if (data.priority) existing.priority = data.priority;
+      if (data.checkpointStep) existing.checkpointStep = data.checkpointStep;
+      if (data.actualValue) existing.actualValue = data.actualValue;
+      if (data.evidence && data.evidence.length > 0) {
+        existing.evidence = mergeEvidenceArrays(existing.evidence || [], data.evidence as any[]) as any;
+      }
+      if (data.suggestedFix) (existing as any).suggestedFix = data.suggestedFix;
+      if (wasApproved) {
+        existing.status = "PENDING";
+        existing.resolvedAt = undefined;
+        existing.resolvedBy = undefined;
+        existing.resolutionNotes = undefined;
+        logger.info(
+          { tenantId, entityId, stage: stage_, resumeAttempts: (existing as any).resumeAttempts },
+          "ReviewRepository.findOrUpdateStageReview [in-memory]: Reopening APPROVED review with new findings"
+        );
+      }
+      existing.updatedAt = new Date();
+      return existing;
+    }
+
+    // Create fresh in-memory
+    const id = generateId();
+    const dedupKey = computeReviewDedupKey(tenantId, data);
+    const doc: any = {
+      ...data,
+      _id: id,
+      id,
+      tenantId,
+      dedupKey,
+      findings: data.findings,
+      resumeAttempts: 0,
+      evidence: data.evidence || [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    inMemory.reviews.set(id, doc);
+    return doc;
   }
 
   static async findMany(

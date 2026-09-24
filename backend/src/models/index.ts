@@ -367,6 +367,29 @@ const DiscrepancyItemSchema = new Schema(
   { _id: false }
 );
 
+export interface IStageFinding {
+  id: string;
+  checkType: string;
+  field: string;
+  expected: string;
+  actual: string;
+  message: string;
+  resolved: boolean;
+}
+
+const StageFindingSchema = new Schema<IStageFinding>(
+  {
+    id: { type: String, required: true },
+    checkType: { type: String, required: true },
+    field: { type: String, required: true },
+    expected: { type: String, default: "" },
+    actual: { type: String, default: "" },
+    message: { type: String, required: true },
+    resolved: { type: Boolean, default: false }
+  },
+  { _id: false }
+);
+
 export interface IHumanReview extends Document {
   tenantId: string;
   dedupKey?: string;
@@ -381,6 +404,10 @@ export interface IHumanReview extends Document {
   expectedValue?: string;
   actualValue?: string;
   evidence: IEvidenceItem[];
+  /** Structured per-check findings — all errors within a stage, batched into one review. */
+  findings: IStageFinding[];
+  /** How many times the workflow resumed and re-hit this stage with remaining errors. */
+  resumeAttempts: number;
   discrepancyReport?: IDiscrepancyItem[];
   suggestedFix?: {
     failurePatternSummary: string;
@@ -411,6 +438,8 @@ const HumanReviewSchema = new Schema<IHumanReview>(
     expectedValue: { type: String },
     actualValue: { type: String },
     evidence: [EvidenceItemSchema],
+    findings: { type: [StageFindingSchema], default: [] },
+    resumeAttempts: { type: Number, default: 0 },
     discrepancyReport: [DiscrepancyItemSchema],
     suggestedFix: {
       failurePatternSummary: { type: String },

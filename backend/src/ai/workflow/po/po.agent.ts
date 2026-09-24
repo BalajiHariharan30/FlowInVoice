@@ -8,6 +8,7 @@ import {
   ReviewRepository
 } from "../../../repositories/index.js";
 import { logger } from "../../../utils/logger.js";
+import { StageFinding } from "../../../types/index.js";
 
 /**
  * Agent 3: PO Validation Agent (100% Deterministic TypeScript)
@@ -192,6 +193,29 @@ export function createPOValidationNode(tenantId: string) {
     const latency = Date.now() - startTime;
 
     if (hasErrors) {
+      // Build typed StageFinding[] from all accumulated string errors.
+      // One finding per check failure — full list, not just first error.
+      const stageFindings: StageFinding[] = errors.map((msg, idx) => {
+        // Derive a stable checkType from the message content
+        let checkType = "VALIDATION_ERROR";
+        let field = "po_data";
+        if (msg.includes("CURRENCY_MISMATCH")) { checkType = "CURRENCY_UNIFORMITY_CHECK"; field = "currency"; }
+        else if (msg.includes("math mismatch")) { checkType = "LINE_MATH_CHECK"; field = `line_${idx + 1}`; }
+        else if (msg.includes("Subtotal mismatch")) { checkType = "SUBTOTAL_MATH_CHECK"; field = "subtotal"; }
+        else if (msg.includes("Total mismatch") || msg.includes("Total expected")) { checkType = "TOTAL_AMOUNT_CHECK"; field = "totalAmount"; }
+        else if (msg.includes("Duplicate PO")) { checkType = "DUPLICATE_PO_CHECK"; field = "poNumber"; }
+        else if (msg.includes("confidence")) { checkType = "EXTRACTION_CONFIDENCE_CHECK"; field = "extractionConfidence"; }
+        return {
+          id: `po_validation:${checkType}:${field}:${idx}`,
+          checkType,
+          field,
+          expected: "",
+          actual: "",
+          message: msg,
+          resolved: false
+        };
+      });
+
       logger.warn({ tenantId, poId: state.poId, errors }, "POValidationAgent: Validation failed with errors");
       await AuditRepository.create(tenantId, {
         agentName: "POVerificationAgent",
@@ -205,6 +229,7 @@ export function createPOValidationNode(tenantId: string) {
       return {
         validationChecks: checks,
         validationErrors: errors,
+        stageFindings,
         isBusinessException: true,
         currentStep: "po_validation"
       };

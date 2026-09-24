@@ -117,14 +117,18 @@ export function createExceptionNode(tenantId: string) {
       );
     }
 
-    // Bug 4 / Anti-Resurrection Protection: If human approval was ALREADY granted for this PO,
-    // do NOT create any secondary review ticket across any stage. Force-resume directly to posting.
+    // Bug 4 / Anti-Resurrection Protection:
+    // If human approval was already granted AND the current stage has NO errors,
+    // bypass re-creating a review and force-resume to posting.
+    // If errors STILL exist (partial fix), we do NOT bypass — findOrUpdateStageReview
+    // will reopen the existing approved review in place (never creates a duplicate).
     const hasAnyApprovedReview = previousReviews.some((r) => r.status === "APPROVED");
-    if (hasAnyApprovedReview || state.isHumanApproved || po?.status === "HUMAN_APPROVED") {
+    const currentErrors = state.validationErrors || [];
+    if ((hasAnyApprovedReview || state.isHumanApproved || po?.status === "HUMAN_APPROVED") && currentErrors.length === 0) {
       const existingApproved = previousReviews.find((r) => r.status === "APPROVED");
       logger.warn(
         { tenantId, poId: state.poId, reason, approvedReviewId: existingApproved?._id?.toString() },
-        "ANTI_RESURRECTION: PO already has an approved review ticket or HUMAN_APPROVED status. Bypassing duplicate review creation and force-resuming workflow to posting."
+        "ANTI_RESURRECTION: PO already has an approved review and no current errors. Bypassing review creation and force-resuming workflow to posting."
       );
       await AuditRepository.create(tenantId, {
         agentName: "ExceptionAgent",
@@ -133,7 +137,7 @@ export function createExceptionNode(tenantId: string) {
         entityId: state.poId,
         workflowId: state.workflowId,
         latency: Date.now() - startTime,
-        summary: `ANTI_RESURRECTION: Bypassed duplicate review ticket creation for already-approved PO (${state.poId}). Resuming to posting.`
+        summary: `ANTI_RESURRECTION: Bypassed review creation for already-approved PO with no current errors (${state.poId}). Resuming to posting.`
       });
       return {
         isBusinessException: false,
@@ -144,105 +148,47 @@ export function createExceptionNode(tenantId: string) {
       };
     }
 
-    // Check if an open PENDING review ticket already exists to prevent duplicate review accumulation
-    const existingPending = await ReviewRepository.findPendingByEntityId(tenantId, state.poId);
+    // ── INVARIANT: One non-terminal review per (poId, stage) ─────────────────
+    // findOrUpdateStageReview enforces this:
+    //   • No existing review for this stage → CREATE new PENDING with findings[].
+    //   • Non-terminal (PENDING/ESCALATED) exists → UPDATE in place: replace findings[], ++resumeAttempts.
+    //   • APPROVED exists → REOPEN to PENDING: replace findings[], ++resumeAttempts, clear resolvedAt/By.
+    // Never calls ReviewRepository.create() directly for stage reviews.
+    const stageFindings = state.stageFindings || errors.map((msg, idx) => ({
+      id: `${stage}:VALIDATION_ERROR:field_${idx}`,
+      checkType: "VALIDATION_ERROR",
+      field: "po_data",
+      expected: "",
+      actual: "",
+      message: msg,
+      resolved: false
+    }));
+
     let reviewId: string;
-    if (existingPending) {
-      reviewId = existingPending._id.toString();
-
-      // Merge and deduplicate evidence across workflow runs (§Step 7 Remediation)
-      const existingEvidence = existingPending.evidence || [];
-      const newEvidence = state.evidence || [];
-      const mergedEvidence = [...existingEvidence];
-
-      for (const ev of newEvidence) {
-        const isDuplicate = mergedEvidence.some(
-          (e) =>
-            (e.chunkId && ev.chunkId && e.chunkId === ev.chunkId) ||
-            (e.documentId === ev.documentId && e.section === ev.section)
-        );
-        if (!isDuplicate) {
-          mergedEvidence.push(ev);
-        }
-      }
-
-      await ReviewRepository.updateReview(tenantId, reviewId, {
-        reason,
-        priority,
+    try {
+      const review = await ReviewRepository.findOrUpdateStageReview(tenantId, {
+        entity: "purchase_order",
+        entityId: state.poId,
         stage,
         checkpointStep: state.currentStep,
+        status: "PENDING",
+        priority,
+        reason,
+        requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
+        expectedValue: "Within Contract/Policy Limits",
         actualValue: reason,
-        evidence: mergedEvidence,
+        evidence: state.evidence || [],
+        findings: stageFindings as any,
         ...(suggestedFix ? { suggestedFix } : {})
       });
+      reviewId = review._id.toString();
       logger.info(
-        { tenantId, poId: state.poId, reviewId, evidenceCount: mergedEvidence.length },
-        "ExceptionAgent: Updated existing open review ticket with merged evidence"
+        { tenantId, poId: state.poId, reviewId, findingCount: stageFindings.length, resumeAttempts: (review as any).resumeAttempts },
+        "ExceptionAgent: Upserted stage review ticket"
       );
-    } else {
-      // Create Human Review Record
-      try {
-        const review = await ReviewRepository.create(tenantId, {
-          entity: "purchase_order",
-          entityId: state.poId,
-          stage,
-          checkpointStep: state.currentStep,
-          status: "PENDING",
-          priority,
-          reason,
-          requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
-          expectedValue: "Within Contract/Policy Limits",
-          actualValue: reason,
-          evidence: state.evidence || [],
-          ...(suggestedFix ? { suggestedFix } : {})
-        });
-        reviewId = review._id.toString();
-        logger.info({ tenantId, poId: state.poId, reviewId }, "ExceptionAgent: Created new review ticket");
-      } catch (err: any) {
-        // Handle MongoServerError code 11000 from unique partial index { tenantId, entityId } (status: "PENDING")
-        if (err.code === 11000 || (err.name === "MongoServerError" && err.code === 11000)) {
-          logger.warn(
-            { tenantId, poId: state.poId, err: err.message },
-            "ExceptionAgent: Concurrent duplicate pending review ticket race caught; re-fetching existing ticket"
-          );
-          const concurrentPending = await ReviewRepository.findPendingByEntityId(tenantId, state.poId);
-          if (concurrentPending) {
-            reviewId = concurrentPending._id.toString();
-
-            const existingEvidence = concurrentPending.evidence || [];
-            const newEvidence = state.evidence || [];
-            const mergedEvidence = [...existingEvidence];
-
-            for (const ev of newEvidence) {
-              const isDuplicate = mergedEvidence.some(
-                (e) =>
-                  (e.chunkId && ev.chunkId && e.chunkId === ev.chunkId) ||
-                  (e.documentId === ev.documentId && e.section === ev.section)
-              );
-              if (!isDuplicate) {
-                mergedEvidence.push(ev);
-              }
-            }
-
-            await ReviewRepository.updateReview(tenantId, reviewId, {
-              reason,
-              priority,
-              stage,
-              actualValue: reason,
-              evidence: mergedEvidence,
-              ...(suggestedFix ? { suggestedFix } : {})
-            });
-            logger.info(
-              { tenantId, poId: state.poId, reviewId, evidenceCount: mergedEvidence.length },
-              "ExceptionAgent: Updated concurrently created open review ticket with merged evidence"
-            );
-          } else {
-            throw err;
-          }
-        } else {
-          throw err;
-        }
-      }
+    } catch (err: any) {
+      logger.error({ tenantId, poId: state.poId, err: err.message }, "ExceptionAgent: findOrUpdateStageReview failed");
+      throw err;
     }
 
     // Mark PO in HUMAN_REVIEW status
@@ -256,7 +202,7 @@ export function createExceptionNode(tenantId: string) {
       entityId: state.poId,
       workflowId: state.workflowId,
       latency,
-      summary: `Workflow exception escalated to Review Center (${stage} stage): ${reason}. Attached ${state.evidence?.length || 0} evidence items.`
+      summary: `Workflow exception escalated to Review Center (${stage} stage): ${reason}. ${stageFindings.length} finding(s) stored.`
     });
 
     return {

@@ -18,7 +18,7 @@ describe("STEP 7 (HIGH) — Evidence Merging on Review Ticket Re-Flagging", () =
     vi.restoreAllMocks();
   });
 
-  it("merges and deduplicates evidence items across multiple exception runs rather than overwriting", async () => {
+  it("merges and deduplicates evidence items within the SAME stage across multiple exception runs", async () => {
     // 1. Create a PO
     const po = await PurchaseOrderRepository.create(tenantId, {
       poNumber: "PO-EVIDENCE-MERGE-01",
@@ -35,27 +35,27 @@ describe("STEP 7 (HIGH) — Evidence Merging on Review Ticket Re-Flagging", () =
     const poId = po._id.toString();
     const exceptionNode = createExceptionNode(tenantId);
 
-    // 2. First Exception Run: Low OCR Confidence with OCR evidence chunk
+    // 2. First Exception Run: Policy Evaluation with one evidence chunk
     const firstState: WorkflowState = {
       tenantId,
       poId,
       workflowId: "wf_1",
       documentName: "ev.pdf",
       s3Key: "pos/ev.pdf",
-      currentStep: "extraction",
+      currentStep: "policy_evaluation",
       status: "PROCESSING",
       toolCallCount: 0,
       validationChecks: [],
-      validationErrors: ["Low OCR extraction confidence"],
+      validationErrors: ["Price variance exceeds 10%"],
       evidence: [
         {
           sourceType: "CONTRACT",
-          documentId: "doc_ocr_01",
-          documentName: "ocr_evidence.pdf",
+          documentId: "doc_contract_01",
+          documentName: "Rate_Schedule_2026.pdf",
           pageNumber: 1,
-          section: "OCR Extraction Summary",
-          chunkId: "chunk_ocr_01",
-          claim: "Scanned text readability score: 62%"
+          section: "Section 4. Base Pricing",
+          chunkId: "chunk_pricing_01",
+          claim: "Base price for SKU-A is 100.00"
         }
       ],
       policySourceReferences: [],
@@ -65,22 +65,25 @@ describe("STEP 7 (HIGH) — Evidence Merging on Review Ticket Re-Flagging", () =
       allowedVariancePct: 10,
       stepRetries: {},
       isHumanApproved: false,
-      skipValidation: false
+      skipValidation: false,
+      noActiveContract: false,
+      requiresCatalogReview: false
     };
 
     await exceptionNode(firstState);
 
     // Verify first ticket created with 1 evidence item
-    const reviewFirst = await ReviewRepository.findPendingByEntityId(tenantId, poId);
+    const reviewFirst = await ReviewRepository.findPendingByStage(tenantId, poId, "validation");
     expect(reviewFirst).not.toBeNull();
     expect(reviewFirst!.evidence.length).toBe(1);
-    expect(reviewFirst!.evidence[0].chunkId).toBe("chunk_ocr_01");
+    expect(reviewFirst!.evidence[0].chunkId).toBe("chunk_pricing_01");
 
-    // 3. Second Exception Run: Commercial Price Variance with Pricing Clause evidence
+    // 3. Second Exception Run: Same stage (policy_evaluation → validation) with additional evidence
     const secondState: WorkflowState = {
       ...firstState,
+      workflowId: "wf_2",
       currentStep: "policy_evaluation",
-      validationErrors: ["Price variance exceeds 10%"],
+      validationErrors: ["Price variance exceeds 10% on another item"],
       evidence: [
         {
           sourceType: "CONTRACT",
@@ -96,14 +99,35 @@ describe("STEP 7 (HIGH) — Evidence Merging on Review Ticket Re-Flagging", () =
 
     await exceptionNode(secondState);
 
-    // 4. Verify review ticket was updated and contains BOTH evidence items (merged!)
-    const reviewSecond = await ReviewRepository.findPendingByEntityId(tenantId, poId);
+    // 4. Same stage → same review updated; evidence merged (contains both chunks)
+    const reviewSecond = await ReviewRepository.findPendingByStage(tenantId, poId, "validation");
     expect(reviewSecond).not.toBeNull();
+    // Same review document (not a new one)
     expect(reviewSecond!._id.toString()).toBe(reviewFirst!._id.toString());
+    // Evidence merged: both chunks present
     expect(reviewSecond!.evidence.length).toBe(2);
 
     const chunkIds = reviewSecond!.evidence.map((e) => e.chunkId);
-    expect(chunkIds).toContain("chunk_ocr_01");
+    expect(chunkIds).toContain("chunk_pricing_01");
     expect(chunkIds).toContain("chunk_pricing_99");
+
+    // 5. Cross-stage: extraction stage creates a SEPARATE review
+    const extractionState: WorkflowState = {
+      ...firstState,
+      workflowId: "wf_3",
+      currentStep: "extraction",
+      validationErrors: ["Low OCR confidence"],
+      evidence: []
+    };
+
+    await exceptionNode(extractionState);
+
+    // Should now have 2 reviews: one for validation, one for extraction
+    const allReviews = await ReviewRepository.findByEntityId(tenantId, poId);
+    const stages = allReviews.map((r) => r.stage);
+    expect(stages).toContain("validation");
+    expect(stages).toContain("extraction");
+    // Exactly 2 distinct stages
+    expect(new Set(stages).size).toBe(2);
   });
 });

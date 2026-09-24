@@ -6,6 +6,7 @@ import {
   AuditRepository
 } from "../../../repositories/index.js";
 import { logger } from "../../../utils/logger.js";
+import { StageFinding } from "../../../types/index.js";
 
 /**
  * Agent 2: Matching Agent (100% Deterministic TypeScript)
@@ -116,11 +117,22 @@ export function createMatchingNode(tenantId: string) {
       summary: `Matched customer ${customer.name} and resolved ${matchedLineItems.length} catalog items`
     });
 
+    const stageFindings: StageFinding[] = errors.map((msg, idx) => ({
+      id: `matching:UNCATALOGED_SKU:sku_${idx}`,
+      checkType: "UNCATALOGED_SKU_CHECK",
+      field: `lineItem_${idx}`,
+      expected: "Cataloged SKU",
+      actual: "Uncataloged SKU",
+      message: msg,
+      resolved: false
+    }));
+
     return {
       customerId,
       customerName: customer.name,
       matchedLineItems,
       validationErrors: errors,
+      stageFindings: stageFindings.length > 0 ? stageFindings : undefined,
       isBusinessException: requiresCatalogReview,
       requiresCatalogReview,
       currentStep: "matching"

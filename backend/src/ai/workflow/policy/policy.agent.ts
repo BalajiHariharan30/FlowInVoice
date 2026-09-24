@@ -1,6 +1,6 @@
 import { WorkflowState } from "../state.js";
 import { AgentTools } from "../../../tools/index.js";
-import { EvidenceItem } from "../../../types/index.js";
+import { EvidenceItem, StageFinding } from "../../../types/index.js";
 import {
   ValidationResultRepository,
   AuditRepository,
@@ -173,6 +173,15 @@ export function createPolicyEvaluationNode(tenantId: string) {
       policySourceReferences: sourceReferences,
       validationChecks: checks,
       validationErrors: errors,
+      stageFindings: errors.length > 0 ? errors.map((msg, idx) => ({
+        id: `policy_evaluation:PRICE_POLICY:item_${idx}`,
+        checkType: "PRICE_POLICY_TOLERANCE_CHECK",
+        field: `lineItem_${idx}`,
+        expected: "Within policy variance limit",
+        actual: msg,
+        message: msg,
+        resolved: false
+      } as StageFinding)) : undefined,
       approvalRequired: hasErrors,
       approvalReason: hasErrors ? errors[0] : undefined,
       isBusinessException: hasErrors,
