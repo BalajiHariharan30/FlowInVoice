@@ -562,4 +562,22 @@ export class PurchaseOrderRepository {
     const data = items.slice((page - 1) * pageSize, page * pageSize);
     return { data, pagination: calcPagination(page, pageSize, total) };
   }
+
+  /**
+   * Returns POs with status "HUMAN_APPROVED" whose updatedAt is older than
+   * thresholdMinutes. These are candidates for stranded-approval reconciliation.
+   */
+  static async findStrandedApprovals(thresholdMinutes = 2): Promise<IPurchaseOrder[]> {
+    const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
+    if (isDbConnected()) {
+      return PurchaseOrder.find({ status: "HUMAN_APPROVED", updatedAt: { $lt: cutoff } }) as unknown as Promise<IPurchaseOrder[]>;
+    }
+    const results: IPurchaseOrder[] = [];
+    for (const doc of inMemory.pos.values()) {
+      if (doc.status === "HUMAN_APPROVED" && new Date(doc.updatedAt) < cutoff) {
+        results.push(doc);
+      }
+    }
+    return results;
+  }
 }

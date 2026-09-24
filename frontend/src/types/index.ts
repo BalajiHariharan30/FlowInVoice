@@ -255,6 +255,7 @@ export interface DashboardSummary {
   totalPOs: number;
   approvedPOs: number;
   pendingReviews: number;
+  pendingResumePOs?: number;
   totalInvoicedAmount: number;
   processingAccuracy: number;
 }

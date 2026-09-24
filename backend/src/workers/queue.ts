@@ -262,13 +262,41 @@ export class QueueManager {
 
   private static startSlaWatcher(): void {
     if (this.slaInterval) return;
+    // One-shot boot sweep: catch any POs stranded before this process started
+    setTimeout(() => { this.reconcileStrandedApprovals().catch(() => {}); }, 5000);
     this.slaInterval = setInterval(async () => {
       try {
         await ReviewRepository.escalateStaleReviews(undefined, 24);
       } catch (err: any) {
         logger.warn({ err: err.message }, "Background SLA escalation check encountered an error");
       }
-    }, 300000); // Check every 5 minutes
+      try {
+        await this.reconcileStrandedApprovals();
+      } catch (err: any) {
+        logger.warn({ err: err.message }, "Background stranded-approval reconciliation encountered an error");
+      }
+    }, 300000); // Every 5 minutes
+  }
+
+  static async reconcileStrandedApprovals(): Promise<void> {
+    const stranded = await PurchaseOrderRepository.findStrandedApprovals(2);
+    if (stranded.length === 0) return;
+    logger.info({ count: stranded.length }, "QueueManager: Found stranded HUMAN_APPROVED POs; re-queuing resume jobs");
+    for (const po of stranded) {
+      const tenantId = po.tenantId;
+      const poId = po._id.toString();
+      try {
+        const review = await ReviewRepository.findLatestByEntityId(tenantId, poId);
+        if (!review || review.status !== "APPROVED") continue;
+        const reviewId = review._id.toString();
+        const jobId = `po-resume-${tenantId}-${poId}-${reviewId}`;
+        if (this.activeProcessingJobs.has(jobId)) continue;
+        logger.info({ tenantId, poId, reviewId }, "QueueManager: Re-queuing stranded resume job");
+        await this.addPOResumeJob(tenantId, poId, reviewId);
+      } catch (err: any) {
+        logger.warn({ err: err.message, poId }, "QueueManager: Failed to re-queue stranded resume job (will retry next cycle)");
+      }
+    }
   }
 
   private static scheduleReconnectWatcher(): void {

@@ -42,7 +42,7 @@ dashboardRouter.get("/summary", async (req: Request, res: Response, next: NextFu
 
     if (isDbConnected()) {
       try {
-        const [poStats, pendingReviewsCount, invoiceStats] = await Promise.all([
+        const [poStats, pendingReviewsCount, invoiceStats, pendingResumePOsCount] = await Promise.all([
           PurchaseOrder.aggregate([
             { $match: { tenantId } },
             {
@@ -67,13 +67,15 @@ dashboardRouter.get("/summary", async (req: Request, res: Response, next: NextFu
                 totalAmount: { $sum: "$totalAmount" }
               }
             }
-          ])
+          ]),
+          PurchaseOrder.countDocuments({ tenantId, status: "HUMAN_APPROVED" })
         ]);
 
         const summary = {
           totalPOs: poStats[0]?.totalPOs || 0,
           approvedPOs: poStats[0]?.approvedPOs || 0,
           pendingReviews: pendingReviewsCount || 0,
+          pendingResumePOs: pendingResumePOsCount || 0,
           totalInvoicedAmount: Number((invoiceStats[0]?.totalAmount || 0).toFixed(2)),
           processingAccuracy: Number(((poStats[0]?.avgConfidence || 0.98) * 100).toFixed(1))
         };
@@ -90,6 +92,7 @@ dashboardRouter.get("/summary", async (req: Request, res: Response, next: NextFu
     const approvedPOs = tenantPOs.filter((p: any) =>
       STATUS_CATEGORY.approved.includes(p.status)
     ).length;
+    const pendingResumePOs = tenantPOs.filter((p: any) => p.status === "HUMAN_APPROVED").length;
     const avgConfidence =
       tenantPOs.length > 0
         ? tenantPOs.reduce((sum: number, p: any) => sum + (p.extractionConfidence || 0.98), 0) / tenantPOs.length
@@ -108,6 +111,7 @@ dashboardRouter.get("/summary", async (req: Request, res: Response, next: NextFu
       totalPOs: tenantPOs.length,
       approvedPOs,
       pendingReviews,
+      pendingResumePOs,
       totalInvoicedAmount: Number(totalInvoicedAmount.toFixed(2)),
       processingAccuracy: Number((avgConfidence * 100).toFixed(1))
     });

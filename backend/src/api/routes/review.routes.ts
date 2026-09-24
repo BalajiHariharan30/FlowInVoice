@@ -311,14 +311,21 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
         );
 
         // Fast path: try BullMQ; on success mark row ENQUEUED.
-        // On failure: leave row PENDING — reconciler will pick it up.
-        const resumeJobId = await QueueManager.addPOResumeJob(
-          tenantId,
-          review.entityId,
-          review._id.toString(),
-          outboxId   // <-- pass outboxId so queue.ts can mark it ENQUEUED
-        );
-        logger.info({ tenantId, poId: review.entityId, resumeJobId, outboxId }, "Queued pipeline resume after approval");
+        // On failure: log and leave row PENDING — reconciler will pick it up within 5 min.
+        try {
+          const resumeJobId = await QueueManager.addPOResumeJob(
+            tenantId,
+            review.entityId,
+            review._id.toString(),
+            outboxId
+          );
+          logger.info({ tenantId, poId: review.entityId, resumeJobId, outboxId }, "Queued pipeline resume after approval");
+        } catch (queueErr: any) {
+          logger.error(
+            { err: queueErr.message, tenantId, poId: review.entityId, outboxId },
+            "handleReviewApproval: addPOResumeJob threw unexpectedly — PO is HUMAN_APPROVED; reconciler will recover"
+          );
+        }
       }
     }
   } else if (review.stage === "invoice") {
