@@ -140,9 +140,14 @@ export const ReviewDetailsPage: React.FC = () => {
   let approvalConsequence = "Resumes autonomous agent processing from current stage checkpoint.";
   let rejectionConsequence = "Stops pipeline processing and closes exception.";
 
+  const hasCatalogFindings = review.findings?.some((f) => f.checkType === "UNCATALOGED_SKU_CHECK");
+
   if (review.stage === "extraction") {
     approvalConsequence = "Accepts extracted values and proceeds directly to contract validation & RAG checks.";
     rejectionConsequence = "Halts pipeline, notifies accounts payable, and flags PO as rejected.";
+  } else if (review.stage === "validation" && hasCatalogFindings) {
+    approvalConsequence = "Approves uncataloged product(s) for this order. Proceeds to policy & pricing evaluation.";
+    rejectionConsequence = "Rejects uncataloged SKU(s). Prevents further processing until products are added to catalog.";
   } else if (review.stage === "validation") {
     approvalConsequence = "Authorizes commercial pricing/terms deviation. Proceeds to automated Invoice Generation.";
     rejectionConsequence = "Rejects PO validation. Prevents invoice issuance for unapproved terms.";
@@ -366,33 +371,45 @@ export const ReviewDetailsPage: React.FC = () => {
               <span className="text-[11px] font-bold uppercase tracking-wider text-workspace-muted">
                 Exception Trigger & Description
               </span>
-              <p className="text-base font-bold text-workspace-text mt-1">{review.reason}</p>
+              <p className="text-base font-bold text-workspace-text mt-1">
+                {hasCatalogFindings
+                  ? `${review.findings.filter((f) => f.checkType === "UNCATALOGED_SKU_CHECK").length} Uncataloged SKU(s) Require Catalog Approval`
+                  : review.stage === "extraction"
+                  ? "Low OCR Extraction Confidence — Manual Review Required"
+                  : review.findings && review.findings.length > 0
+                  ? `${review.findings.length} Validation Check(s) Failed — Authorization Required`
+                  : review.reason}
+              </p>
             </div>
 
-            {/* Expected vs Extracted Side-by-Side Comparison */}
+            {/* Expected vs Detected Side-by-Side Comparison */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
               <div className="p-3.5 rounded-lg bg-emerald-50 border border-emerald-200">
                 <span className="text-[10px] font-bold uppercase text-emerald-800 tracking-wider">
-                  Contract / Expected Rule
+                  {hasCatalogFindings ? "Required Standard" : review.stage === "extraction" ? "Quality Threshold" : "Contract / Expected Rule"}
                 </span>
                 <p className="text-sm font-bold text-emerald-950 font-mono mt-1">
-                  {review.expectedValue !== null && review.expectedValue !== undefined && review.expectedValue !== ""
+                  {review.expectedValue && review.expectedValue !== ""
                     ? String(review.expectedValue)
-                    : "Standard Catalog Baseline"}
+                    : hasCatalogFindings
+                    ? "All SKUs cataloged in product inventory"
+                    : review.stage === "extraction"
+                    ? "OCR Confidence ≥ 75%"
+                    : "Within contracted pricing & policy limits"}
                 </p>
                 <span className="text-[10px] text-emerald-700 block mt-1">
-                  Per authorized rate schedule
+                  {hasCatalogFindings ? "Per product catalog policy" : review.stage === "extraction" ? "Minimum extraction quality" : "Per authorized rate schedule"}
                 </span>
               </div>
 
               <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200">
                 <span className="text-[10px] font-bold uppercase text-amber-800 tracking-wider">
-                  PO Extracted Value
+                  {hasCatalogFindings ? "Detected Issue" : review.stage === "extraction" ? "Detected Issue" : "PO Extracted Value"}
                 </span>
                 <p className="text-sm font-bold text-amber-950 font-mono mt-1">
-                  {review.actualValue !== null && review.actualValue !== undefined && review.actualValue !== ""
+                  {review.actualValue && review.actualValue !== ""
                     ? String(review.actualValue)
-                    : "Value in Uploaded Document"}
+                    : "See findings checklist below"}
                 </p>
                 <span className="text-[10px] text-amber-700 block mt-1">
                   Requires human authorization

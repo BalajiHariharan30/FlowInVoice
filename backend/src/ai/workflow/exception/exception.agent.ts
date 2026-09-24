@@ -164,6 +164,20 @@ export function createExceptionNode(tenantId: string) {
       resolved: false
     }));
 
+    // Derive semantic expected/actual labels based on what kind of exception this is
+    const isCatalogReview = stageFindings.some((f) => f.checkType === "UNCATALOGED_SKU_CHECK");
+    const isExtractionReview = stage === "extraction";
+    const expectedValue = isCatalogReview
+      ? "All line items match cataloged products in inventory"
+      : isExtractionReview
+      ? "OCR extraction confidence ≥ 75%"
+      : "Within contracted pricing & policy limits";
+    const actualValue = isCatalogReview
+      ? `${stageFindings.length} uncataloged SKU(s) require catalog approval`
+      : isExtractionReview
+      ? reason
+      : `${stageFindings.length} policy/math violation(s) detected`;
+
     let reviewId: string;
     try {
       const review = await ReviewRepository.findOrUpdateStageReview(tenantId, {
@@ -175,8 +189,8 @@ export function createExceptionNode(tenantId: string) {
         priority,
         reason,
         requestedByAgent: `FlowInvoice_${state.currentStep || "Workflow"}`,
-        expectedValue: "Within Contract/Policy Limits",
-        actualValue: reason,
+        expectedValue,
+        actualValue,
         evidence: state.evidence || [],
         findings: stageFindings as any,
         ...(suggestedFix ? { suggestedFix } : {})
