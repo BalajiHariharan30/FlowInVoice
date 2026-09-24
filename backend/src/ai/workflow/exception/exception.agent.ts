@@ -164,19 +164,53 @@ export function createExceptionNode(tenantId: string) {
       resolved: false
     }));
 
-    // Derive semantic expected/actual labels based on what kind of exception this is
+    // Derive per-checkType labels so every exception type gets accurate, distinct fields.
     const isCatalogReview = stageFindings.some((f) => f.checkType === "UNCATALOGED_SKU_CHECK");
     const isExtractionReview = stage === "extraction";
-    const expectedValue = isCatalogReview
-      ? "All line items match cataloged products in inventory"
-      : isExtractionReview
-      ? "OCR extraction confidence ≥ 75%"
-      : "Within contracted pricing & policy limits";
-    const actualValue = isCatalogReview
-      ? `${stageFindings.length} uncataloged SKU(s) require catalog approval`
-      : isExtractionReview
-      ? reason
-      : `${stageFindings.length} policy/math violation(s) detected`;
+    const primaryCheckType = stageFindings[0]?.checkType || "VALIDATION_ERROR";
+    const primaryFinding = stageFindings[0];
+
+    let expectedValue: string;
+    let actualValue: string;
+
+    if (isCatalogReview) {
+      expectedValue = "All line items match cataloged products in inventory";
+      actualValue = `${stageFindings.length} uncataloged SKU(s) require catalog approval`;
+    } else if (isExtractionReview) {
+      expectedValue = "OCR extraction confidence ≥ 75%";
+      // Structured: extract the numeric confidence value from the error message
+      const confMatch = reason.match(/([\d.]+)%/);
+      actualValue = confMatch
+        ? `Extraction confidence: ${confMatch[1]}% (minimum required: 75%)`
+        : reason;
+    } else {
+      // Systemic fix: map each checkType to semantically correct, non-misleading labels
+      const EXPECTED_LABEL: Record<string, string> = {
+        LINE_MATH_CHECK:              "qty × unitPrice = lineTotal for every line item",
+        SUBTOTAL_MATH_CHECK:          "sum(lineTotals) = stated subtotal",
+        TOTAL_AMOUNT_CHECK:           "subtotal + tax − discount = totalAmount",
+        DUPLICATE_PO_CHECK:           "Unique PO number per tenant",
+        CURRENCY_UNIFORMITY_CHECK:    "All line items share the PO header currency",
+        PRICE_POLICY_TOLERANCE_CHECK: "Unit price within contracted rate ± allowable variance",
+        VALIDATION_ERROR:             "All automated validation checks passed",
+      };
+      const getActual = (checkType: string): string => {
+        switch (checkType) {
+          case "PRICE_POLICY_TOLERANCE_CHECK":
+            return `${stageFindings.length} item(s) exceed price variance threshold: ${primaryFinding?.message || reason}`;
+          case "DUPLICATE_PO_CHECK":
+          case "LINE_MATH_CHECK":
+          case "SUBTOTAL_MATH_CHECK":
+          case "TOTAL_AMOUNT_CHECK":
+          case "CURRENCY_UNIFORMITY_CHECK":
+            return primaryFinding?.message || reason;
+          default:
+            return primaryFinding?.message || reason;
+        }
+      };
+      expectedValue = EXPECTED_LABEL[primaryCheckType] || "All validation checks passed per policy";
+      actualValue = getActual(primaryCheckType);
+    }
 
     let reviewId: string;
     try {
@@ -223,6 +257,7 @@ export function createExceptionNode(tenantId: string) {
       reviewId,
       status: "HUMAN_REVIEW",
       isBusinessException: true,
+      validationErrors: errors,
       currentStep: "exception"
     };
   };

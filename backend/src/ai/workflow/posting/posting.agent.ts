@@ -7,6 +7,8 @@ import {
   AuditRepository
 } from "../../../repositories/index.js";
 import { MockErpClient, getTenantErpConnector } from "./erp-connectors.js";
+import { createExceptionNode } from "../exception/exception.agent.js";
+import { StageFinding } from "../../../types/index.js";
 import PDFDocument from "pdfkit";
 import { logger } from "../../../utils/logger.js";
 
@@ -63,17 +65,25 @@ export function createPostingNode(tenantId: string) {
     if (mathErrors.length > 0) {
       logger.error(
         { tenantId, poId: state.poId, mathErrors },
-        "PostingAgent: Arithmetic invariant check failed. Halting posting and routing to human review."
+        "PostingAgent: Arithmetic invariant check failed. Routing to human review via ExceptionAgent."
       );
-      await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, state.poId, "HUMAN_REVIEW", {
-        failureReason: mathErrors.join("; ")
-      });
-      return {
-        status: "HUMAN_REVIEW",
-        isBusinessException: true,
+      // Build typed findings so the Review Center shows accurate per-line expected vs actual values
+      const mathFindings: StageFinding[] = mathErrors.map((msg, idx) => ({
+        id: `posting:LINE_MATH_CHECK:line_${idx}`,
+        checkType: "LINE_MATH_CHECK",
+        field: `lineItem_${idx}`,
+        expected: "",  // exception.agent will derive from EXPECTED_LABEL map
+        actual: "",
+        message: msg,
+        resolved: false
+      }));
+      return createExceptionNode(tenantId)({
+        ...state,
+        currentStep: "posting",  // ensures stage = "invoice" in createExceptionNode
         validationErrors: mathErrors,
-        currentStep: "human_review"
-      };
+        stageFindings: mathFindings,
+        isBusinessException: true
+      } as any);
     }
 
     await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "INVOICE_GENERATING");
