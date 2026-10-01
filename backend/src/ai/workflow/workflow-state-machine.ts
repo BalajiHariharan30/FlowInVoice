@@ -107,6 +107,7 @@ export const ALLOWED_PO_TRANSITIONS: Record<POStatus, readonly POStatus[]> = {
     "INVOICE_GENERATING",
     "COMPLETED",
     "FAILED",
+    "HUMAN_REVIEW", // A6: supervisor can reopen if pipeline exhausts all retries post-approval
     "DELETED"
   ],
   APPROVED: [

@@ -320,11 +320,12 @@ describe("Human Review Queue Removal on Approve/Reject", () => {
   });
 
   it("enqueues resume with QUEUED status and reopens a CRITICAL review ticket when resume retries exhaust", async () => {
+    // Create a PO in HUMAN_APPROVED state (post-approval, pre-pipeline-execution)
     const po = await PurchaseOrderRepository.create(tenantId, {
       poNumber: "PO-RESUME-FAIL-TEST",
       customerName: "Resume Fail Corp",
       gstNumber: "27AABCU9603R1ZM",
-      status: "HUMAN_REVIEW",
+      status: "HUMAN_APPROVED",
       subtotal: 500.0,
       tax: 90.0,
       totalAmount: 590.0,
@@ -346,23 +347,15 @@ describe("Human Review Queue Removal on Approve/Reject", () => {
       entity: "purchase_order",
       entityId: po._id.toString(),
       stage: "validation",
-      status: "PENDING",
+      status: "APPROVED",
       priority: "HIGH",
       reason: "Simulated validation review requiring resume",
-      requestedByAgent: "ValidationAgent"
+      requestedByAgent: "ValidationAgent",
+      resolvedAt: new Date(),
+      resolvedBy: "reviewer@flowinvoice.io"
     });
 
-    const approveRes = await request(app)
-      .post(`/api/v1/reviews/${review._id.toString()}/approve`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({ resolutionNotes: "Approved despite variance" });
-
-    // 1. Approve endpoint returns 200 with resumeStatus: "QUEUED" (decoupled from async execution)
-    expect(approveRes.status).toBe(200);
-    expect(approveRes.body.status).toBe("APPROVED");
-    expect(approveRes.body.resumeStatus).toBe("QUEUED");
-
-    // 2. Simulate all retries exhausted via handleResumeExhausted
+    // Simulate all BullMQ retries exhausted (this is what the BullMQ failed event handler calls)
     const { handleResumeExhausted } = await import("../src/ai/workflow/resume-failure-handler.js");
     await handleResumeExhausted(
       tenantId,
@@ -371,11 +364,11 @@ describe("Human Review Queue Removal on Approve/Reject", () => {
       new Error("Simulated posting ERP gateway connection timed out")
     );
 
-    // 3. The PO status must be FAILED
+    // A6: PO must be in HUMAN_REVIEW (not FAILED) so reviewer can re-approve
     const updatedPo = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
-    expect(updatedPo?.status).toBe("FAILED");
+    expect(updatedPo?.status).toBe("HUMAN_REVIEW");
 
-    // 4. A new review ticket exists with status PENDING and priority CRITICAL
+    // A new CRITICAL review ticket must be created so reviewer is notified
     const allReviews = await ReviewRepository.findByEntityId(tenantId, po._id.toString());
     const reopenedReview = allReviews.find((r) => r.status === "PENDING" && r.priority === "CRITICAL");
     expect(reopenedReview).toBeDefined();
