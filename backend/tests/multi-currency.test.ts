@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   PurchaseOrderRepository,
+  ProductRepository,
   InvoiceRepository,
   clearTestRepositories
 } from "../src/repositories/index.js";
@@ -10,9 +11,12 @@ import { runOrchestrationWorkflow } from "../src/ai/workflow/graph.js";
 describe("STEP 4 (HIGH) — Reject Silent Multi-Currency Summation", () => {
   const tenantId = "tenant_currency_test";
 
-  beforeEach(() => {
+  beforeEach(async () => {
     clearTestRepositories();
     resetWorkflowRateLimiter();
+    // Seed both SKUs so matching passes cleanly; currency mismatch is caught at poValidation
+    await ProductRepository.create(tenantId, { sku: "SKU-USD-ITEM", name: "US Import License", basePrice: 100 });
+    await ProductRepository.create(tenantId, { sku: "SKU-INR-ITEM", name: "Local Handling Fee", basePrice: 8300 });
   });
 
   afterEach(() => {
