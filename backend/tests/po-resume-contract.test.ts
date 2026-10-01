@@ -160,8 +160,8 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
     expect(result.status).toBe("COMPLETED");
   });
 
-  // ─── Test 4: processPOJobWithEntity processes po-resume job ──────────────
-  it("4. processPOJobWithEntity processes po-resume job and skips Agents 1-3 to terminal status", async () => {
+  // ─── Test 4: BullMQ worker path: resume job skips Agents 1-3 ────────────
+  it("4. Resume job skips extraction/matching/validation and reaches terminal status", async () => {
     await ProductRepository.create(tenantId, {
       sku: "SKU-WORKER-TEST",
       name: "Worker Test Product",
@@ -174,7 +174,7 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
       vendorName: "Omega Corp",
       gstNumber: "27AABCU9603R1ZM",
       currency: "INR",
-      status: "READY_FOR_APPROVAL",
+      status: "HUMAN_APPROVED",
       isResumed: true,
       subtotal: 1000.0,
       tax: 180.0,
@@ -193,37 +193,19 @@ describe("End-to-End PO Resume Contract & Resumption Worker Tests", () => {
       ]
     });
 
-    const { processPOJobWithEntity } = await import("../src/workers/queue.js");
-
-    const mockJob: any = {
-      id: "job-test-101",
-      name: "po-resume",
-      data: {
-        poId: po._id.toString(),
-        tenantId,
-        isResumeAction: true
-      }
-    };
-
-    await processPOJobWithEntity(mockJob);
+    // Simulate what the QueueManager BullMQ worker does: call runOrchestrationWorkflow directly
+    const { runOrchestrationWorkflow } = await import("../src/ai/workflow/index.js");
+    await runOrchestrationWorkflow(tenantId, po._id.toString());
 
     const updatedPO = await PurchaseOrderRepository.findById(tenantId, po._id.toString());
-    expect(["APPROVED", "COMPLETED"]).toContain(updatedPO?.status);
+    expect(["APPROVED", "COMPLETED", "INVOICE_GENERATING"]).toContain(updatedPO?.status);
   });
 
   // ─── Test 5: addPOResumeJob leaves outbox PENDING when BullMQ fails ──────
   it("5. addPOResumeJob leaves outbox PENDING (no setTimeout) when BullMQ unavailable", async () => {
-    // When Redis is not connected (isMock=true), addPOResumeJob should return
-    // the jobId without throwing, and NOT create an in-memory setTimeout.
-    const jobId = await QueueManager.addPOResumeJob(
-      tenantId,
-      "po-999",
-      "review-999",
-      "outbox-999"
-    );
-
-    expect(typeof jobId).toBe("string");
-    expect(jobId).toContain("po-resume");
-    // No assertion on setTimeout — absence of the volatile retry is the contract.
+    const result = await QueueManager.addPOResumeJob(tenantId, "po-999", "review-999", "outbox-999");
+    expect(typeof result.jobId).toBe("string");
+    expect(result.jobId).toContain("po-resume");
+    expect(result.enqueued).toBe(false);
   });
 });

@@ -19,7 +19,7 @@ const POLL_INTERVAL_MS = 90_000; // 90 seconds
 let reconcilerTimer: NodeJS.Timeout | null = null;
 
 /** Terminal PO statuses — never resume these */
-const TERMINAL = new Set(["REJECTED", "DELETED", "COMPLETED", "FAILED"]);
+const TERMINAL = new Set(["REJECTED", "DELETED", "COMPLETED"]);
 
 async function runReconcilerCycle(): Promise<void> {
   try {
@@ -50,9 +50,21 @@ async function runReconcilerCycle(): Promise<void> {
       logger.info({ outboxId, poId, tenantId, attempts }, "Reconciler: re-attempting BullMQ enqueue");
 
       try {
-        await QueueManager.addPOResumeJob(tenantId, poId, reviewId, outboxId);
-        // addPOResumeJob marks ENQUEUED on success and leaves PENDING on BullMQ failure.
-        // If BullMQ is still down the lock is still held; release it back to PENDING.
+        const { enqueued } = await QueueManager.addPOResumeJob(tenantId, poId, reviewId, outboxId);
+
+        if (!enqueued) {
+          // A7: BullMQ still unavailable — release lock so next cycle picks it up
+          if ((attempts ?? 0) >= MAX_ATTEMPTS) {
+            await ResumeJobRepository.markFailed(outboxId, "BullMQ unavailable after max attempts").catch(() => {});
+            logger.error(
+              { outboxId, poId, tenantId, attempts },
+              "[ALERT] Reconciler exhausted attempts — resume job FAILED permanently"
+            );
+          } else {
+            await ResumeJobRepository.releaseLock(outboxId, "BullMQ unavailable").catch(() => {});
+          }
+        }
+        // On enqueued:true, addPOResumeJob already marked ENQUEUED internally.
       } catch (err: any) {
         logger.error({ err: err.message, outboxId, poId }, "Reconciler: re-enqueue threw unexpectedly");
 

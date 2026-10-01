@@ -192,14 +192,7 @@ export function calculateResumeStage(
   persistedStep?: string,
   poStatus?: string
 ): "matching" | "poValidation" | "policyEvaluation" | "approvalDecision" | "posting" {
-  if (
-    poStatus === "READY_FOR_APPROVAL" ||
-    poStatus === "REVIEW_REQUIRED" ||
-    poStatus === "NEEDS_APPROVAL"
-  ) {
-    return "policyEvaluation";
-  }
-
+  // A4: resolve checkpointStep FIRST — never let PO status short-circuit checkpoint
   const step =
     review?.checkpointStep ||
     persistedStep ||
@@ -231,13 +224,35 @@ export function calculateResumeStage(
     return "approvalDecision";
   }
 
-  // Case C: Review at approvalDecision, posting, or invoice validation -> resume from posting
+  // Case C: Review at approvalDecision, posting, or invoice -> resume from posting
   if (step === "approvalDecision" || step === "posting" || review?.stage === "invoice") {
     return "posting";
   }
 
+  // Last resort: use PO status as a heuristic only when no checkpoint is recorded
+  if (
+    poStatus === "READY_FOR_APPROVAL" ||
+    poStatus === "REVIEW_REQUIRED" ||
+    poStatus === "NEEDS_APPROVAL"
+  ) {
+    return "policyEvaluation";
+  }
+
   return "posting";
 }
+
+// ---------------------------------------------------------------------------
+// Shared constant — used by orchestrator AND queue worker to decide whether
+// a PO is in a mid-flight "checkpoint" state requiring resume (not fresh run).
+// ---------------------------------------------------------------------------
+export const CHECKPOINT_STATUSES = [
+  "READY_FOR_APPROVAL",
+  "DISCREPANCY_FOUND",
+  "REVIEW_REQUIRED",
+  "NEEDS_APPROVAL",
+  "HUMAN_REVIEW",
+  "HUMAN_APPROVED"
+] as const;
 
 // ---------------------------------------------------------------------------
 // Main orchestrator
@@ -486,12 +501,15 @@ export async function runDeterministicWorkflow(
   await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
 
   // ── Build agent functions (closure-bound to tenantId) ─────────────────────
+  // A2: posting is now part of allStages so checkpoint-based resume can target it
+  // and a BullMQ retry after a failed posting only re-runs posting, not OCR/matching.
   const allStages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }> = [
     { name: "extraction",       fn: createExtractionNode(tenantId) as any },
     { name: "matching",         fn: createMatchingNode(tenantId) as any },
     { name: "poValidation",     fn: createPOValidationNode(tenantId) as any },
     { name: "policyEvaluation", fn: createPolicyEvaluationNode(tenantId) as any },
     { name: "approvalDecision", fn: createApprovalDecisionNode(tenantId) as any },
+    { name: "posting",          fn: createPostingNode(tenantId) as any },
   ];
 
   let stages: Array<{ name: string; fn: (s: PipelineState) => Promise<Partial<PipelineState>> }>;
@@ -501,18 +519,10 @@ export async function runDeterministicWorkflow(
       { tenantId, poId, reviewStage: review?.stage, checkpointStep: (review as any)?.checkpointStep, resumeStage },
       "DeterministicOrchestrator: Resuming from checkpoint after human review approval"
     );
-
-    if (resumeStage === "posting") {
-      stages = [{ name: "posting", fn: createPostingNode(tenantId) as any }];
-    } else {
-      const resumeIndex = allStages.findIndex((s) => s.name === resumeStage);
-      if (resumeIndex >= 0) {
-        stages = allStages.slice(resumeIndex);
-      } else {
-        stages = [{ name: "posting", fn: createPostingNode(tenantId) as any }];
-      }
-    }
+    const resumeIndex = allStages.findIndex((s) => s.name === resumeStage);
+    stages = resumeIndex >= 0 ? allStages.slice(resumeIndex) : [allStages[allStages.length - 1]];
   } else if (persistedState?.currentStep && !persistedState.isBusinessException) {
+    // A2: resume after the last completed stage (not allStages.length - 1 which excluded posting)
     const lastStepIndex = allStages.findIndex((s) => s.name === persistedState.currentStep);
     if (lastStepIndex >= 0 && lastStepIndex < allStages.length - 1) {
       logger.info(
@@ -528,24 +538,31 @@ export async function runDeterministicWorkflow(
   }
 
   // ── Timeout guard ──────────────────────────────────────────────────────────
-  const timeoutMs = options?.timeoutMs || Number(process.env.WORKFLOW_TIMEOUT_MS) || 60000;
-  let timedOut = false;
-  const timeoutHandle = setTimeout(() => { timedOut = true; }, timeoutMs);
+  // A8: per-stage timeout — each stage gets its own deadline so a hung OCR or LLM
+  // call can't block the whole orchestrator forever.  Default raised to 180s.
+  const stageTimeoutMs = options?.timeoutMs || Number(process.env.STAGE_TIMEOUT_MS) || 180_000;
+
+  // Helper that runs a stage fn wrapped in Promise.race against a stage-level timeout.
+  async function runStage(fn: (s: PipelineState) => Promise<Partial<PipelineState>>, s: PipelineState): Promise<Partial<PipelineState>> {
+    return Promise.race([
+      fn(s),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Stage timed out after ${Math.round(stageTimeoutMs / 1000)}s`)), stageTimeoutMs)
+      )
+    ]);
+  }
 
   try {
     // ── Sequential stage loop ─────────────────────────────────────────────────
     for (const { name, fn } of stages) {
-      if (timedOut) {
-        throw new Error(`Workflow orchestration timed out. Operation exceeded ${Math.round(timeoutMs / 1000)}s limit.`);
-      }
-
       logger.info({ tenantId, poId, stage: name }, "DeterministicOrchestrator: executing stage");
       state = applyUpdate(state, { currentStep: name });
 
-      const update = await fn(state);
+      // A8: per-stage timeout via Promise.race
+      const update = await runStage(fn, state);
       state = applyUpdate(state, update as Partial<PipelineState>);
 
-      // Persist after each stage
+      // Persist after each stage — A2: enables reliable retry from last checkpoint
       await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
 
       // Emit step event
@@ -566,14 +583,46 @@ export async function runDeterministicWorkflow(
       }
 
       // ── Routing decisions (replaces conditional edges) ─────────────────────
+      // Helper: after any exception node call, if the result is the anti-resurrection
+      // bypass (isHumanApproved:true, no business exception), fall through to posting
+      // instead of breaking — A3 fix.
+      const runExceptionThenMaybePost = async (label: string): Promise<boolean> => {
+        logger.info({ poId }, `DeterministicOrchestrator: routing ${label} → exception`);
+        const exUpdate = await createExceptionNode(tenantId)(state as any);
+        state = applyUpdate(state, exUpdate as any);
+        await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
+        emitStep(options, "exception", state);
+
+        // A3: anti-resurrection bypass returned HUMAN_APPROVED + no exception
+        // → run posting now so PO reaches COMPLETED
+        if (state.isHumanApproved && !state.isBusinessException) {
+          logger.info({ poId }, "DeterministicOrchestrator: anti-resurrection bypass → running posting");
+          state = applyUpdate(state, { currentStep: "posting" });
+          const postUpdate = await runStage(createPostingNode(tenantId) as any, state);
+          state = applyUpdate(state, postUpdate as Partial<PipelineState>);
+          await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
+          emitStep(options, "posting", state);
+        }
+        return true; // signals: break the outer loop
+      };
+
       if (name === "extraction") {
         const next = shouldContinueAfterExtraction(state as any);
         if (next === "exception") {
-          logger.info({ poId }, "DeterministicOrchestrator: routing extraction → exception");
-          state = applyUpdate(state, await createExceptionNode(tenantId)(state as any) as any);
-          await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
-          emitStep(options, "exception", state);
-          break; // exception is terminal for this run
+          await runExceptionThenMaybePost("extraction");
+          break;
+        }
+      }
+
+      if (name === "matching") {
+        // matching.agent sets isBusinessException when catalog review required
+        const needsException =
+          !state.isHumanApproved &&
+          !state.skipValidation &&
+          ((state.validationErrors && state.validationErrors.length > 0) || state.isBusinessException);
+        if (needsException) {
+          await runExceptionThenMaybePost("matching");
+          break;
         }
       }
 
@@ -583,10 +632,7 @@ export async function runDeterministicWorkflow(
           !state.skipValidation &&
           ((state.validationErrors && state.validationErrors.length > 0) || state.isBusinessException);
         if (needsException) {
-          logger.info({ poId, errors: state.validationErrors }, "DeterministicOrchestrator: routing poValidation → exception");
-          state = applyUpdate(state, await createExceptionNode(tenantId)(state as any) as any);
-          await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
-          emitStep(options, "exception", state);
+          await runExceptionThenMaybePost("poValidation");
           break;
         }
       }
@@ -598,26 +644,19 @@ export async function runDeterministicWorkflow(
             state.isBusinessException ||
             state.approvalRequired);
         if (needsException) {
-          logger.info({ poId }, "DeterministicOrchestrator: routing approvalDecision → exception");
-          state = applyUpdate(state, await createExceptionNode(tenantId)(state as any) as any);
-          await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
-          emitStep(options, "exception", state);
+          await runExceptionThenMaybePost("approvalDecision");
           break;
         }
-        // No exception: continue to posting
-        logger.info({ poId }, "DeterministicOrchestrator: routing approvalDecision → posting");
-        state = applyUpdate(state, { currentStep: "posting" });
-        const postingUpdate = await createPostingNode(tenantId)(state as any);
-        state = applyUpdate(state, postingUpdate as Partial<PipelineState>);
-        await PurchaseOrderRepository.savePipelineState(tenantId, poId, state as any);
-        emitStep(options, "posting", state);
-        break;
+        // No exception — posting stage is next in allStages; continue the loop naturally.
       }
     }
 
-    // ── Terminal: prune pipeline state if COMPLETED ────────────────────────
+    // ── Terminal: prune pipeline state and reset isResumed if COMPLETED ───────
     if (state.status === "COMPLETED") {
+      // A9: reset isResumed on the PO document so the next BullMQ job can't
+      // accidentally treat the same PO as a mid-flight resume again.
       await PurchaseOrderRepository.savePipelineState(tenantId, poId, { completed: true, completedAt: new Date().toISOString() });
+      await PurchaseOrderRepository.updateExtraction(tenantId, poId, { isResumed: false } as any).catch(() => {});
     }
 
     return {
@@ -635,9 +674,9 @@ export async function runDeterministicWorkflow(
     };
 
   } catch (err: any) {
-    const isTimeout = timedOut || err.message?.includes("timed out");
+    const isTimeout = err.message?.includes("timed out");
     const errMsg = isTimeout
-      ? `Workflow orchestration timed out. Operation exceeded ${Math.round(timeoutMs / 1000)}s limit.`
+      ? err.message
       : err.message;
 
     logger.error({ err, tenantId, poId, isTimeout }, "DeterministicOrchestrator: execution failed");
@@ -650,9 +689,7 @@ export async function runDeterministicWorkflow(
       workflowId,
       summary: `Deterministic orchestration failed: ${errMsg}`
     });
-    throw isTimeout ? new Error(errMsg) : err;
-  } finally {
-    clearTimeout(timeoutHandle);
+    throw err;
   }
 }
 
@@ -712,24 +749,13 @@ export async function executePostReviewRouting(po: PurchaseOrderEntity): Promise
  * with aggregate root encapsulation, checkpoint preservation, and top-level error trapping.
  */
 export async function runDeterministicPipeline(po: PurchaseOrderEntity): Promise<PurchaseOrderEntity> {
-  console.log(`\n==================================================`);
-  console.log(`[Pipeline Execution] PO ID: ${po.id}`);
-  console.log(`[Pipeline Execution] Status: "${po.status}" | isResumed: ${po.isResumed}`);
-  console.trace(`[Pipeline Callstack Trace]`);
-  console.log(`==================================================\n`);
+  logger.info({ poId: po.id, status: po.status, isResumed: po.isResumed }, "[Pipeline] Starting deterministic pipeline execution");
 
-  const isCheckpointStatus = [
-    "DISCREPANCY_FOUND",
-    "REVIEW_REQUIRED",
-    "READY_FOR_APPROVAL",
-    "NEEDS_APPROVAL",
-    "HUMAN_REVIEW",
-    "HUMAN_APPROVED"
-  ].includes(po.status);
+  const isCheckpointStatus = (CHECKPOINT_STATUSES as readonly string[]).includes(po.status);
 
   // HARD RESUMPTION DEFENSE: Skip OCR/Catalog/Math if resuming or in review
   if (po.isResumed || isCheckpointStatus) {
-    console.log(`[Pipeline] ⏩ FORCE RESUME TRIGGERED for PO ${po.id}. Bypassing Agents 1-3 (OCR/Catalog/Math).`);
+    logger.info({ poId: po.id }, "[Pipeline] FORCE RESUME — bypassing extraction/matching/validation agents");
     return await executePostReviewRouting(po);
   }
 

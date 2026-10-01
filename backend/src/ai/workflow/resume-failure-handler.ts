@@ -12,7 +12,9 @@ export async function handleResumeExhausted(
     "Workflow resume permanently failed after all retry attempts; reopening review ticket"
   );
 
-  await PurchaseOrderRepository.updateStatus(tenantId, poId, "FAILED", err.message);
+  // Set PO to HUMAN_REVIEW (not FAILED) so the state machine allows
+  // HUMAN_REVIEW -> HUMAN_APPROVED when the reviewer approves the reopened ticket.
+  await PurchaseOrderRepository.updateStatus(tenantId, poId, "HUMAN_REVIEW", err.message);
 
   const original = await ReviewRepository.findById(tenantId, approvedReviewId);
 

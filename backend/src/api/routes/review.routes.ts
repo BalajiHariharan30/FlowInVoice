@@ -311,22 +311,20 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
           }
         );
 
-        // Fast path: try BullMQ; on success mark row ENQUEUED.
-        // On failure: log and leave row PENDING — reconciler will pick it up within 5 min.
-        try {
-          const resumeJobId = await QueueManager.addPOResumeJob(
-            tenantId,
-            review.entityId,
-            review._id.toString(),
-            outboxId
+        // Fast path: try BullMQ; on enqueued:false fall back to inline synchronous resume.
+        const { jobId: resumeJobId, enqueued } = await QueueManager.addPOResumeJob(
+          tenantId,
+          review.entityId,
+          review._id.toString(),
+          outboxId
+        );
+        logger.info({ tenantId, poId: review.entityId, resumeJobId, enqueued, outboxId }, "Queued pipeline resume after approval");
+        if (!enqueued) {
+          logger.warn(
+            { tenantId, poId: review.entityId, outboxId },
+            "handleReviewApproval: BullMQ unavailable — falling back to synchronous inline resume"
           );
-          logger.info({ tenantId, poId: review.entityId, resumeJobId, outboxId }, "Queued pipeline resume after approval");
-        } catch (queueErr: any) {
-          logger.error(
-            { err: queueErr.message, tenantId, poId: review.entityId, outboxId },
-            "handleReviewApproval: addPOResumeJob failed — falling back to synchronous inline resume"
-          );
-          // Immediate inline fallback; reconciler is the final safety net if even this fails
+          // Immediate inline fallback; reconciler is the final safety net
           await executeSynchronousResumeFallback(tenantId, review.entityId, review._id.toString());
         }
       }

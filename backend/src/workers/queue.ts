@@ -2,12 +2,9 @@ import { Queue, Worker, Job } from "bullmq";
 import Redis, { RedisOptions } from "ioredis";
 import { env } from "../config/env.js";
 import { logger } from "../utils/logger.js";
-import { runOrchestrationWorkflow } from "../ai/workflow/index.js";
+import { runOrchestrationWorkflow, CHECKPOINT_STATUSES } from "../ai/workflow/index.js";
 import { PurchaseOrderRepository, ReviewRepository, ResumeJobRepository } from "../repositories/index.js";
-import { PurchaseOrderModel } from "../models/purchase-order.model.js";
 import { PurchaseOrderEntity, mapToEntityStatus } from "../domain/entities/purchase-order.entity.js";
-import { runDeterministicPipeline } from "../ai/workflow/deterministic.js";
-import { inMemory, isDbConnected } from "../repositories/base.js";
 
 export interface POProcessingJobData {
   tenantId: string;
@@ -156,7 +153,7 @@ export class QueueManager {
               (job.data as any).action === "resume" ||
               Boolean((po as any)?.isResumed) ||
               Boolean(approvedReviewId) ||
-              ["READY_FOR_APPROVAL", "DISCREPANCY_FOUND", "REVIEW_REQUIRED", "NEEDS_APPROVAL", "HUMAN_REVIEW", "HUMAN_APPROVED"].includes(po.status);
+              (CHECKPOINT_STATUSES as readonly string[]).includes(po.status);
 
             // 3. Map MongoDB Document -> Domain Entity State Machine
             const poEntity = PurchaseOrderEntity.create({
@@ -184,14 +181,12 @@ export class QueueManager {
               poEntity.resumeExecution();
             }
 
-            // 4. Run pipeline using guarded aggregate root
+            // 4. Run pipeline via static import (A9: no redundant dynamic re-import)
             if (isResumeAction) {
               logger.info({ jobId: job.id, poId }, "Processing PO resume job via live BullMQ worker");
-              const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
               await runOrchestrationWorkflow(tenantId, poId, undefined, approvedReviewId);
             } else {
               logger.info({ jobId: job.id, poId }, "Processing PO job via live BullMQ worker");
-              const { runOrchestrationWorkflow } = await import("../ai/workflow/graph.js");
               await runOrchestrationWorkflow(tenantId, poId);
             }
 
@@ -411,43 +406,50 @@ export class QueueManager {
 
   /**
    * Enqueues the post-approval pipeline resume.
-   * Accepts an optional outboxId — if provided, marks the outbox row
-   * ENQUEUED on success or leaves it PENDING on failure (reconciler picks up).
-   *
-   * The in-memory setTimeout fallback has been removed: it was volatile and
-   * silently lost jobs on server restart/redeploy.
+   * Returns { jobId, enqueued: true } on BullMQ success,
+   *         { jobId, enqueued: false } when Redis is unavailable (outbox row stays PENDING).
+   * Clears any stale failed/completed job with the same jobId first so BullMQ
+   * doesn't silently drop the add() call (A5).
    */
   static async addPOResumeJob(
     tenantId: string,
     poId: string,
     approvedReviewId: string,
     outboxId?: string
-  ): Promise<string> {
+  ): Promise<{ jobId: string; enqueued: boolean }> {
     const jobId = `po-resume-${tenantId}-${poId}-${approvedReviewId}`;
 
     if (!this.isMock && this.poQueue) {
       try {
+        // A5: remove a stale job with this ID so add() is not silently dropped
+        const existing = await this.poQueue.getJob(jobId);
+        if (existing) {
+          const state = await existing.getState();
+          if (state === "failed" || state === "completed") {
+            await existing.remove();
+          }
+        }
+
         await this.poQueue.add(
           "resume-po",
           { tenantId, poId, approvedReviewId },
           {
             jobId,
             removeOnComplete: true,
-            removeOnFail: 100
+            removeOnFail: 100,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 2000 }
           }
         );
         logger.info({ jobId, queue: "po-processing" }, "Successfully enqueued PO resume job to BullMQ");
 
-        // Mark outbox row ENQUEUED so the reconciler skips it
         if (outboxId) {
           await ResumeJobRepository.markEnqueued(outboxId).catch((e) =>
             logger.warn({ err: e.message, outboxId }, "Could not mark outbox row ENQUEUED (non-fatal)")
           );
         }
-        return jobId;
+        return { jobId, enqueued: true };
       } catch (err: any) {
-        // === OBSERVABILITY ALERT ===
-        // TODO: wire to Sentry/Slack/PagerDuty when monitoring is configured
         logger.error(
           { err: err.message, jobId, outboxId, tenantId, poId },
           "[ALERT] BullMQ resume enqueue FAILED — outbox row left PENDING for reconciler pickup"
@@ -455,149 +457,17 @@ export class QueueManager {
         if (outboxId) {
           await ResumeJobRepository.markEnqueueFailed(outboxId, err.message).catch(() => {});
         }
-        // Do NOT fall back to in-memory setTimeout — that loses jobs on restart.
-        return jobId;
+        return { jobId, enqueued: false };
       }
     }
 
-    // Redis not connected at all — outbox row already PENDING; reconciler handles it.
+    // Redis not connected — outbox row already PENDING; reconciler handles it.
     logger.warn(
       { jobId, outboxId, tenantId, poId },
       "[ALERT] BullMQ unavailable — resume job left in outbox PENDING for reconciler"
     );
-    return jobId;
+    return { jobId, enqueued: false };
   }
 }
 
-/**
- * Direct DDD Worker function (InvoiceScan pattern) to process a job with PurchaseOrderEntity encapsulation.
- */
-export async function processPOJobWithEntity(job: Job): Promise<void> {
-  console.log(`\n==================================================`);
-  console.log(`[Worker Entry] Received Job Name: "${job.name}" | ID: ${job.id}`);
-  console.log(`[Worker Payload]:`, JSON.stringify(job.data));
-  console.trace(`[Worker Callstack Trace]`);
-  console.log(`==================================================\n`);
 
-  const poId = job.data.poId || job.data.id || job.data.purchaseOrderId;
-
-  if (!poId) {
-    throw new Error(`[Worker Fatal] No valid PO ID found in job payload.`);
-  }
-
-  // Load fresh state directly from MongoDB (or inMemory fallback)
-  let poDoc: any = null;
-  if (isDbConnected()) {
-    poDoc = await PurchaseOrderModel.findById(poId);
-  } else {
-    poDoc = inMemory.pos.get(poId);
-  }
-
-  if (!poDoc) {
-    throw new Error(`[Worker Fatal] Purchase Order ${poId} not found in database.`);
-  }
-
-  console.log(`[Worker DB Inspection] PO ID: ${poId} | Raw DB Status: "${poDoc.status}" | isResumed: ${poDoc.isResumed}`);
-
-  // Detect resume flag from job name, payload property, OR DB status
-  const isResumeAction =
-    job.name === "po-resume" ||
-    job.name === "resume-po" ||
-    job.data.isResumeAction === true ||
-    job.data.action === "resume" ||
-    poDoc.isResumed === true ||
-    ["READY_FOR_APPROVAL", "DISCREPANCY_FOUND", "REVIEW_REQUIRED", "NEEDS_APPROVAL", "HUMAN_REVIEW", "HUMAN_APPROVED"].includes(poDoc.status);
-
-  console.log(`[Worker Resumption Check] isResumeAction evaluated to: ${isResumeAction}`);
-
-  // Hydrate Aggregate Root Entity
-  const poEntity = PurchaseOrderEntity.create({
-    id: poDoc._id.toString(),
-    tenantId: poDoc.tenantId,
-    status: mapToEntityStatus(poDoc.status),
-    vendorName: poDoc.vendorName || poDoc.customerName,
-    totalAmount: poDoc.totalAmount,
-    baseAmount: poDoc.baseAmount ?? poDoc.subtotal,
-    taxAmount: poDoc.taxAmount ?? poDoc.tax,
-    lineItems: (poDoc.lineItems || []).map((li: any) => ({
-      description: li.description || li.productCode || "",
-      quantity: li.quantity || 1,
-      unitPrice: li.unitPrice || 0,
-      totalPrice: li.lineTotal || li.totalPrice || 0
-    })),
-    isResumed: isResumeAction,
-    version: poDoc.__v || (poDoc as any).version || 0
-  });
-
-  if (poEntity.isResumed) {
-    console.log(`[Worker] RESUME CONFIRMED for PO ${poId}. Skipping initial extraction (Agents 1-3).`);
-    if (poEntity.status !== "DISCREPANCY_FOUND" && poEntity.status !== "READY_FOR_APPROVAL") {
-      poEntity.markReadyForApproval();
-    }
-    poEntity.resumeExecution();
-  }
-
-  // Execute workflow pipeline
-  const updatedEntity = await runDeterministicPipeline(poEntity);
-
-  // Persist resulting state back to MongoDB
-  if (isDbConnected()) {
-    await PurchaseOrderModel.findByIdAndUpdate(poId, {
-      $set: {
-        status: updatedEntity.status,
-        vendorName: updatedEntity.data.vendorName,
-        customerName: updatedEntity.data.vendorName,
-        totalAmount: updatedEntity.data.totalAmount,
-        baseAmount: updatedEntity.data.baseAmount,
-        subtotal: updatedEntity.data.baseAmount,
-        taxAmount: updatedEntity.data.taxAmount,
-        tax: updatedEntity.data.taxAmount,
-        lineItems: updatedEntity.data.lineItems,
-        rejectionReason: updatedEntity.data.rejectionReason
-      },
-      $inc: { __v: 1 }
-    });
-  } else {
-    const memDoc = inMemory.pos.get(poId);
-    if (memDoc) {
-      memDoc.status = updatedEntity.status;
-      memDoc.vendorName = updatedEntity.data.vendorName;
-      memDoc.customerName = updatedEntity.data.vendorName;
-      memDoc.totalAmount = updatedEntity.data.totalAmount;
-      memDoc.baseAmount = updatedEntity.data.baseAmount;
-      memDoc.subtotal = updatedEntity.data.baseAmount;
-      memDoc.taxAmount = updatedEntity.data.taxAmount;
-      memDoc.tax = updatedEntity.data.taxAmount;
-      memDoc.lineItems = updatedEntity.data.lineItems;
-      memDoc.rejectionReason = updatedEntity.data.rejectionReason;
-    }
-  }
-
-  console.log(`[Worker Finished] Final PO Status: "${updatedEntity.status}"\n`);
-}
-
-export const poQueue = new Queue("po-processing", {
-  connection: {
-    host: process.env.REDIS_HOST || "localhost",
-    port: Number(process.env.REDIS_PORT) || 6379,
-    enableOfflineQueue: false,
-    connectTimeout: 1000,
-    maxRetriesPerRequest: null
-  }
-});
-poQueue.on("error", () => {});
-
-export const poWorker = new Worker(
-  "po-processing",
-  processPOJobWithEntity,
-  {
-    connection: {
-      host: process.env.REDIS_HOST || "localhost",
-      port: Number(process.env.REDIS_PORT) || 6379,
-      enableOfflineQueue: false,
-      connectTimeout: 1000,
-      maxRetriesPerRequest: null
-    }
-  }
-);
-poWorker.on("error", () => {});

@@ -132,8 +132,8 @@ export const ALLOWED_PO_TRANSITIONS: Record<POStatus, readonly POStatus[]> = {
   COMPLETED: ["DELETED"],
   // Terminal state: an already REJECTED PO cannot be resurrected
   REJECTED: ["DELETED"],
-  // Controlled retry only: FAILED can be restarted into PROCESSING or soft-deleted
-  FAILED: ["PROCESSING", "DELETED"],
+  // Controlled retry only: FAILED can move to HUMAN_REVIEW (reviewer re-approves) or PROCESSING (restart) or be deleted
+  FAILED: ["PROCESSING", "HUMAN_REVIEW", "DELETED"],
   // Absolutely terminal
   DELETED: []
 } as const;
