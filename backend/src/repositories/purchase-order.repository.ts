@@ -167,14 +167,15 @@ export class PurchaseOrderRepository {
     extra: {
       humanReviewedAt?: Date;
       humanReviewedBy?: string;
+      humanVerified?: boolean;
       terminatedAt?: Date;
       terminationReason?: string;
       failureReason?: string;
-      extractionConfidence?: number;
       tax?: number;
     } = {},
     force = false,
-    expectedVersion?: number
+    expectedVersion?: number,
+    session?: any
   ): Promise<IPurchaseOrder | null> {
     const allowedPreceding = getAllowedPrecedingStatuses(status);
     const updatePayload: any = { status, ...extra, updatedAt: new Date() };
@@ -191,7 +192,7 @@ export class PurchaseOrderRepository {
       const result = await PurchaseOrder.findOneAndUpdate(
         query,
         { $set: updatePayload, $inc: { version: 1 } },
-        { new: true }
+        { new: true, ...(session ? { session } : {}) }
       );
       if (!result && !force) {
         const current = await PurchaseOrder.findOne({ tenantId, _id: id });

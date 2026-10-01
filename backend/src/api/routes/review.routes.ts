@@ -119,20 +119,28 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  // Rule 5: Segregation of duties (Maker-Checker check)
+  // Rule 5: Segregation of duties (Maker-Checker) — compare user IDs only; covers all entity types
   const currentUserId = req.user!.id || (req.user as any).userId;
-  const currentUserEmail = req.user!.email;
+  let owningPoCreatedBy: string | undefined;
   if (review.entity === "purchase_order") {
     const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
-    if (po && po.createdBy && (po.createdBy === currentUserId || po.createdBy === currentUserEmail)) {
-      res.status(403).json({
-        code: "MAKER_CHECKER_VIOLATION",
-        message: "Users cannot review documents they submitted",
-        details: { createdBy: po.createdBy, reviewer: currentUserId },
-        requestId: req.requestId || ""
-      });
-      return;
+    owningPoCreatedBy = po?.createdBy;
+  } else if (review.entity === "invoice") {
+    // Resolve the PO that owns this invoice
+    const inv = await InvoiceRepository.findById(tenantId, review.entityId);
+    if (inv?.poId) {
+      const po = await PurchaseOrderRepository.findById(tenantId, inv.poId);
+      owningPoCreatedBy = po?.createdBy;
     }
+  }
+  if (owningPoCreatedBy && owningPoCreatedBy === currentUserId) {
+    res.status(403).json({
+      code: "MAKER_CHECKER_VIOLATION",
+      message: "Users cannot review documents they submitted",
+      details: { createdBy: owningPoCreatedBy, reviewer: currentUserId },
+      requestId: req.requestId || ""
+    });
+    return;
   }
 
   if (review.status === "APPROVED") {
@@ -171,63 +179,53 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  // If reviewer provided corrected line items, persist them to the PO before resuming
+  // If reviewer provided corrected line items, persist them to the PO before resuming.
+  // B3: Do NOT overwrite extractionConfidence — the OCR score reflects actual accuracy.
   if (Array.isArray(correctedLineItems) && correctedLineItems.length > 0) {
     await PurchaseOrderRepository.updateExtraction(tenantId, review.entityId, {
-      lineItems: correctedLineItems,
-      extractionConfidence: 1.0
+      lineItems: correctedLineItems
     });
   }
 
-  const resolved = await ReviewRepository.resolveReview(
-    tenantId,
-    review._id.toString(),
-    "APPROVED",
-    resolutionNotes || "Approved by human reviewer",
-    req.user!.email
-  );
-
-  if (!resolved) {
-    const latest = await ReviewRepository.findById(tenantId, reviewId);
-    if (latest?.status === "APPROVED") {
-      res.status(200).json({
-        id: latest._id.toString(),
-        entity: latest.entity,
-        entityId: latest.entityId,
-        stage: latest.stage,
-        status: latest.status,
-        resolutionNotes: latest.resolutionNotes,
-        resolvedBy: latest.resolvedBy,
-        resolvedAt: latest.resolvedAt,
-        remainingOpenReviewsCount: 0,
-        message: "Review already approved by concurrent operation."
-      });
-      return;
-    }
-    res.status(409).json({
-      code: "REVIEW_STATE_CONFLICT",
-      message: `Review was resolved concurrently with status: ${latest?.status || "UNKNOWN"}`,
-      details: { currentStatus: latest?.status },
-      requestId: req.requestId || ""
-    });
-    return;
-  }
-
-  // Close duplicate pending tickets sharing the same dedupKey
-  await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
-
-  // Rule 2: Multi-exception all-approval check
+  // Rule 2: Multi-exception all-approval check — must happen BEFORE resolveReview so we don't
+  // accidentally resume when other open reviews still exist.
   const allReviews = await ReviewRepository.findByEntityId(tenantId, review.entityId);
   const openReviews = allReviews.filter(
     (r) => (r.status === "PENDING" || r.status === "ESCALATED") && r._id.toString() !== review._id.toString()
   );
 
   if (openReviews.length > 0) {
+    // Resolve this review but do NOT resume the pipeline — more reviews remain.
+    const partialResolved = await ReviewRepository.resolveReview(
+      tenantId,
+      review._id.toString(),
+      "APPROVED",
+      resolutionNotes || "Approved by human reviewer",
+      req.user!.email
+    );
+    if (!partialResolved) {
+      // Concurrent resolve — idempotent: return the current state
+      const latest = await ReviewRepository.findById(tenantId, reviewId);
+      res.status(200).json({
+        id: latest?._id.toString() ?? reviewId,
+        entity: review.entity,
+        entityId: review.entityId,
+        stage: review.stage,
+        status: latest?.status ?? "APPROVED",
+        resolutionNotes: latest?.resolutionNotes,
+        resolvedBy: latest?.resolvedBy,
+        resolvedAt: latest?.resolvedAt,
+        remainingOpenReviewsCount: openReviews.length,
+        message: "Review already resolved by concurrent operation."
+      });
+      return;
+    }
     logger.info(
       { tenantId, entityId: review.entityId, remainingCount: openReviews.length },
       "Review item approved, but other pending reviews remain. PO remains in HUMAN_REVIEW."
     );
-
+    // Close duplicates AFTER resolveReview so propagation uses the "approval" message
+    await ReviewRepository.closeDuplicatePendingTickets(tenantId, review.entityId, review._id.toString());
     await AuditRepository.create(tenantId, {
       agentName: "HumanReviewCenter",
       action: "REVIEW_APPROVED",
@@ -236,23 +234,22 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
       workflowId: "manual_review",
       summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. ${openReviews.length} open review item(s) remain before pipeline resumes.`
     });
-
     res.status(200).json({
-      id: resolved!._id.toString(),
-      entity: resolved!.entity,
-      entityId: resolved!.entityId,
-      stage: resolved!.stage,
-      status: resolved!.status,
-      resolutionNotes: resolved!.resolutionNotes,
-      resolvedBy: resolved!.resolvedBy,
-      resolvedAt: resolved!.resolvedAt,
+      id: partialResolved._id.toString(),
+      entity: partialResolved.entity,
+      entityId: partialResolved.entityId,
+      stage: partialResolved.stage,
+      status: partialResolved.status,
+      resolutionNotes: partialResolved.resolutionNotes,
+      resolvedBy: partialResolved.resolvedBy,
+      resolvedAt: partialResolved.resolvedAt,
       remainingOpenReviewsCount: openReviews.length,
       message: `Review approved. Awaiting resolution of ${openReviews.length} remaining review item(s) before workflow resumes.`
     });
     return;
   }
 
-  // Rule 3: All review items approved -> Resume workflow at the posting stage checkpoint
+  // Rule 3: All review items approved → Resume workflow at the posting stage checkpoint
   if (review.stage === "extraction" || review.stage === "validation") {
     if (review.entity === "purchase_order") {
       const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
@@ -290,26 +287,50 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
           totalAmount
         });
 
-        // Atomically write: PO → HUMAN_APPROVED  +  outbox row (PENDING)
-        // in a single MongoDB session so they can never be inconsistent.
-        const outboxId = await ResumeJobRepository.createWithTransaction(
-          tenantId,
-          review.entityId,
-          review._id.toString(),
-          async (session) => {
-            await PurchaseOrderRepository.updateHumanReviewStatus(
-              tenantId,
-              review.entityId,
-              "HUMAN_APPROVED",
-              {
-                extractionConfidence: 1.0,
-                humanReviewedAt: new Date(),
-                humanReviewedBy: req.user!.email,
-                ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+        // B1+B2: Do the PO update + outbox insert FIRST (inside the transaction), THEN resolve the review.
+        // This means a retry that hits the "already APPROVED" shortcut knows the PO is already consistent.
+        // If the state-machine blocks the PO update (returns null), throw → outbox rolls back → 409.
+        let outboxId: string;
+        try {
+          outboxId = await ResumeJobRepository.createWithTransaction(
+            tenantId,
+            review.entityId,
+            review._id.toString(),
+            async (session) => {
+              const updated = await PurchaseOrderRepository.updateHumanReviewStatus(
+                tenantId,
+                review.entityId,
+                "HUMAN_APPROVED",
+                {
+                  humanVerified: true,          // B3: signals human sign-off; preserves real OCR confidence
+                  humanReviewedAt: new Date(),
+                  humanReviewedBy: req.user!.email,
+                  ...(reconciledTax !== null ? { tax: reconciledTax } : {})
+                },
+                false,
+                undefined,
+                session                          // B1: session propagation
+              );
+              if (!updated) {
+                throw Object.assign(
+                  new Error(`State machine blocked HUMAN_APPROVED transition for PO ${review.entityId}`),
+                  { code: "PO_TRANSITION_BLOCKED" }
+                );
               }
-            );
+            }
+          );
+        } catch (err: any) {
+          if (err.code === "PO_TRANSITION_BLOCKED") {
+            res.status(409).json({
+              code: "PO_STATE_CONFLICT",
+              message: "PO status transition to HUMAN_APPROVED was blocked by the state machine. The PO may have already been processed.",
+              details: { poId: review.entityId },
+              requestId: req.requestId || ""
+            });
+            return;
           }
-        );
+          throw err;
+        }
 
         // Fast path: try BullMQ; on enqueued:false fall back to inline synchronous resume.
         const { jobId: resumeJobId, enqueued } = await QueueManager.addPOResumeJob(
@@ -341,6 +362,33 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     }
   }
 
+  // B2: resolveReview runs after the PO+outbox transaction commits.
+  const resolved = await ReviewRepository.resolveReview(
+    tenantId,
+    review._id.toString(),
+    "APPROVED",
+    resolutionNotes || "Approved by human reviewer",
+    req.user!.email
+  );
+  if (!resolved) {
+    // Concurrent resolve is fine — PO+outbox already committed. Re-fetch for response shape.
+    const latest = await ReviewRepository.findById(tenantId, reviewId);
+    if (latest?.status === "APPROVED") {
+      res.status(200).json({
+        id: latest._id.toString(),
+        entity: latest.entity,
+        entityId: latest.entityId,
+        stage: latest.stage,
+        status: latest.status,
+        resolutionNotes: latest.resolutionNotes,
+        resolvedBy: latest.resolvedBy,
+        resolvedAt: latest.resolvedAt,
+        resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
+      });
+      return;
+    }
+  }
+
   await AuditRepository.create(tenantId, {
     agentName: "HumanReviewCenter",
     action: "REVIEW_APPROVED",
@@ -351,14 +399,14 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
   });
 
   res.status(200).json({
-    id: resolved!._id.toString(),
-    entity: resolved!.entity,
-    entityId: resolved!.entityId,
-    stage: resolved!.stage,
-    status: resolved!.status,
-    resolutionNotes: resolved!.resolutionNotes,
-    resolvedBy: resolved!.resolvedBy,
-    resolvedAt: resolved!.resolvedAt,
+    id: (resolved ?? review)._id.toString(),
+    entity: (resolved ?? review).entity,
+    entityId: (resolved ?? review).entityId,
+    stage: (resolved ?? review).stage,
+    status: resolved?.status ?? "APPROVED",
+    resolutionNotes: resolved?.resolutionNotes,
+    resolvedBy: resolved?.resolvedBy,
+    resolvedAt: resolved?.resolvedAt,
     resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
   });
 }
@@ -390,20 +438,27 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     return;
   }
 
-  // Rule 5: Segregation of duties (Maker-Checker check)
+  // Rule 5: Segregation of duties (Maker-Checker) — compare user IDs only; covers all entity types
   const currentUserId = req.user!.id || (req.user as any).userId;
-  const currentUserEmail = req.user!.email;
+  let rejectOwningPoCreatedBy: string | undefined;
   if (review.entity === "purchase_order") {
     const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
-    if (po && po.createdBy && (po.createdBy === currentUserId || po.createdBy === currentUserEmail)) {
-      res.status(403).json({
-        code: "MAKER_CHECKER_VIOLATION",
-        message: "Users cannot review documents they submitted",
-        details: { createdBy: po.createdBy, reviewer: currentUserId },
-        requestId: req.requestId || ""
-      });
-      return;
+    rejectOwningPoCreatedBy = po?.createdBy;
+  } else if (review.entity === "invoice") {
+    const inv = await InvoiceRepository.findById(tenantId, review.entityId);
+    if (inv?.poId) {
+      const po = await PurchaseOrderRepository.findById(tenantId, inv.poId);
+      rejectOwningPoCreatedBy = po?.createdBy;
     }
+  }
+  if (rejectOwningPoCreatedBy && rejectOwningPoCreatedBy === currentUserId) {
+    res.status(403).json({
+      code: "MAKER_CHECKER_VIOLATION",
+      message: "Users cannot review documents they submitted",
+      details: { createdBy: rejectOwningPoCreatedBy, reviewer: currentUserId },
+      requestId: req.requestId || ""
+    });
+    return;
   }
 
   if (review.status === "REJECTED") {

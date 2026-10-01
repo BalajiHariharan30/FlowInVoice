@@ -419,7 +419,7 @@ export async function runDeterministicWorkflow(
     logger.info({ tenantId, poId }, "DeterministicOrchestrator: all exceptions approved; updating PO status");
     const reconciledTax = reconcileTaxFromLineItems(po.lineItems);
     await PurchaseOrderRepository.updateHumanReviewStatus(tenantId, poId!, "HUMAN_APPROVED", {
-      extractionConfidence: 1.0,
+      humanVerified: true,          // B3: sign-off flag; preserves real OCR confidence
       humanReviewedAt: new Date(),
       humanReviewedBy: "Human Reviewer",
       ...(reconciledTax !== null ? { tax: reconciledTax } : {})

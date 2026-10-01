@@ -134,6 +134,7 @@ export interface IPurchaseOrder extends Document {
   workflowId?: string;
   humanReviewedAt?: Date;
   humanReviewedBy?: string;
+  humanVerified?: boolean;
   terminatedAt?: Date;
   terminationReason?: string;
   deletedAt?: Date;
@@ -205,6 +206,7 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
     workflowId: { type: String },
     humanReviewedAt: { type: Date },
     humanReviewedBy: { type: String },
+    humanVerified: { type: Boolean, default: false },
     terminatedAt: { type: Date },
     terminationReason: { type: String },
     deletedAt: { type: Date },
