@@ -20,6 +20,6 @@ export function useAppConfig(): AppConfig {
     staleTime: Infinity,
     retry: 1
   });
-  // Default to true (enforce) while loading — prevents a split-second flash of enabled buttons
-  return { enforceMakerChecker: data?.enforceMakerChecker ?? true };
+  // Default to false unless explicitly configured true by backend
+  return { enforceMakerChecker: data?.enforceMakerChecker ?? false };
 }
