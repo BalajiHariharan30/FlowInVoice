@@ -42,15 +42,27 @@ export function createMatchingNode(tenantId: string) {
 
     let customer = customerRes?.customer || null;
     if (!customer) {
+      // C3: If no name was extracted, route to human review instead of fabricating a customer
+      if (!customerName || customerName === "Default Customer") {
+        const errMsg = `CUSTOMER_UNRESOLVED: No customer name extracted from document. Manual customer assignment required.`;
+        return {
+          validationErrors: [errMsg],
+          isBusinessException: true,
+          currentStep: "matching"
+        };
+      }
+      // C3: Do NOT invent tax IDs or emails — leave null and flag for verification
+      const tenantCurrency = state.extractedData?.currency || "";
       customer = await CustomerRepository.create(tenantId, {
         name: customerName,
         code: customerName.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 8),
-        email: "billing@" + customerName.toLowerCase().replace(/\s+/g, "") + ".com",
-        gstNumber: state.extractedData?.gstNumber || "27AABCU9603R1ZM",
+        email: null as any,          // C3: no fabricated billing email
+        gstNumber: state.extractedData?.gstNumber || null as any, // C3: null if not on document
         paymentTerms: state.extractedData?.paymentTerms || "NET_30",
-        currency: state.extractedData?.currency || "USD"
+        currency: tenantCurrency,
+        needsVerification: true      // C3: flag for reconciliation
       });
-      logger.info({ tenantId, customerId: customer._id.toString() }, "Auto-provisioned customer master record");
+      logger.info({ tenantId, customerId: customer._id.toString(), needsVerification: true }, "Auto-provisioned customer master record — pending verification");
     }
 
     const customerId = customer._id.toString();
@@ -84,6 +96,9 @@ export function createMatchingNode(tenantId: string) {
         ? AgentTools.calculateVariance(item.unitPrice, catalogPrice)
         : { variancePercentage: 100, isMatch: false };
 
+      // C2: Use per-item flag — not the accumulated outer requiresCatalogReview
+      const itemRequiresCatalogReview = isUncataloged && !autoAcceptedNewSku;
+
       matchedLineItems.push({
         lineNumber: item.lineNumber,
         productCode: item.productCode,
@@ -94,8 +109,9 @@ export function createMatchingNode(tenantId: string) {
         taxRate: item.taxRate,
         catalogPrice: catalogPrice !== null ? catalogPrice : 0,
         variancePercentage: variance.variancePercentage,
-        isMatch: !isUncataloged && variance.isMatch,
-        requiresCatalogReview: isUncataloged && requiresCatalogReview,
+        // C2: auto-accepted below-threshold SKUs are treated as matched (skip policy RAG)
+        isMatch: autoAcceptedNewSku ? true : (!isUncataloged && variance.isMatch),
+        requiresCatalogReview: itemRequiresCatalogReview,
         autoAcceptedNewSku
       });
     }

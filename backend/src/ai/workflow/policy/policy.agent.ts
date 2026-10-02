@@ -51,8 +51,17 @@ export function createPolicyEvaluationNode(tenantId: string) {
     let toolCallCount = 0;
     const toolCallCache = new Map<string, EvidenceItem[]>();
 
+    // C1: set RAG/COMPLIANCE status ONCE before the loop — not inside per-item iterations
+    // (per-item status writes can conflict with the orchestrator's expectedVersion guard)
+    if (matchedItems.some((it) => !it.isMatch)) {
+      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "RAG_CHECKING");
+    }
+
+    // C1: use ?? not || so a legitimate allowedVariancePct of 0 is respected
+    const allowedVariance = state.allowedVariancePct ?? 10.0;
+
     for (const item of matchedItems) {
-      // If price matches catalog exactly, record pass
+      // If price matches catalog exactly (or auto-accepted below-threshold uncataloged SKU), record pass
       if (item.isMatch) {
         checks.push({
           checkName: `CATALOG_PRICE_MATCH_${item.productCode}`,
@@ -63,9 +72,7 @@ export function createPolicyEvaluationNode(tenantId: string) {
       }
 
       // Mismatch detected: perform Agentic RAG Step A (Contract Search)
-      await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "RAG_CHECKING");
-
-      let noActiveContract = false;
+      let contractClauseFound = false;
       if (toolCallCount < MAX_POLICY_TOOL_CALLS && state.customerId) {
         const contractQuery = `negotiated price discount tier for ${item.productCode} or ${item.description}`;
         const cacheKey = `contract:${state.customerId}:${contractQuery}`;
@@ -89,16 +96,46 @@ export function createPolicyEvaluationNode(tenantId: string) {
           for (const c of contractClauses) {
             sourceReferences.push(c.documentId || c.chunkId || "contract_clause");
           }
-          checks.push({
-            checkName: `CONTRACT_RAG_PRICE_${item.productCode}`,
-            passed: true,
-            message: `Contract terms matched clause: ${contractClauses[0].section}`
-          });
-          continue; // Contract overrides catalog variance
-        } else {
-          noActiveContract = true;
+
+          // C1: A RAG clause match is not sufficient to auto-approve.
+          // Try to extract the contracted unit price from the clause metadata.
+          const clause = contractClauses[0];
+          const contractedPrice: number | undefined = (clause as any).contractedUnitPrice ?? (clause as any).unitPrice;
+          if (contractedPrice !== undefined) {
+            const variancePct = item.variancePercentage || 0;
+            const withinContractVariance = variancePct <= allowedVariance;
+            if (withinContractVariance) {
+              checks.push({
+                checkName: `CONTRACT_RAG_PRICE_${item.productCode}`,
+                passed: true,
+                message: `Contracted price verified: clause ${clause.section} covers ${item.productCode} at $${contractedPrice}; variance ${variancePct}% within limit`
+              });
+              contractClauseFound = true;
+            } else {
+              // Clause found but PO price still exceeds variance — fall through to error
+              evidenceList.push(...contractClauses);
+            }
+          } else {
+            // C1: Clause found but price unverifiable — REQUIRES_REVIEW, do NOT auto-pass
+            const reviewMsg = `Item ${item.productCode} has a related contract clause (${clause.section}) but the contracted price cannot be verified. Escalating for human review.`;
+            errors.push(reviewMsg);
+            checks.push({
+              checkName: `CONTRACT_RAG_PRICE_${item.productCode}`,
+              passed: false,
+              message: reviewMsg
+            });
+            contractClauseFound = true; // handled — skip policy fallback below
+          }
         }
+      } else if (toolCallCount >= MAX_POLICY_TOOL_CALLS) {
+        // C1: cap hit — explicit error for items that couldn't be checked
+        const capMsg = `Item ${item.productCode}: RAG tool call cap (${MAX_POLICY_TOOL_CALLS}) reached; price variance could not be verified against contracts/policy.`;
+        errors.push(capMsg);
+        checks.push({ checkName: `POLICY_CAP_${item.productCode}`, passed: false, message: capMsg });
+        continue;
       }
+
+      if (contractClauseFound) continue;
 
       // Agentic RAG Step B: Policy Search
       await PurchaseOrderRepository.updateStatus(tenantId, state.poId, "COMPLIANCE_CHECKING");
@@ -124,9 +161,8 @@ export function createPolicyEvaluationNode(tenantId: string) {
         }
       }
 
-      // Deterministic Enforcement: Compare actual variance against allowed variance (10%)
+      // Deterministic Enforcement: Compare actual variance against allowed variance
       const variancePct = item.variancePercentage || 0;
-      const allowedVariance = state.allowedVariancePct || 10.0;
 
       if (variancePct > allowedVariance) {
         const errorMsg = `Item ${item.productCode} unit price $${item.unitPrice} deviates ${variancePct}% from catalog $${item.catalogPrice}, exceeding allowable policy limit (${allowedVariance}%)`;

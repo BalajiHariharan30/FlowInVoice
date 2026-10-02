@@ -103,6 +103,11 @@ export function createPostingNode(tenantId: string) {
         currentStep: "completed"
       };
     }
+
+    // C4: If invoice is GENERATING and already has an erpPostingId, the ERP call succeeded before
+    // a crash — skip the ERP call and proceed to issuing to avoid a duplicate post.
+    const alreadyPostedToErp = invoice?.erpPostingId != null;
+
     const invoiceNumber = invoice?.invoiceNumber || `INV-${po.poNumber.replace(/^PO-/, "")}`;
 
     // 2. Compute Canonical Decimal Totals
@@ -142,6 +147,10 @@ export function createPostingNode(tenantId: string) {
     const discountAmount = MoneyUtil.from(po.discount || 0);
     const totalAmount = MoneyUtil.calculateTotal(subtotal, taxAmount, discountAmount);
 
+    // C4: dueDate from po.paymentTerms (NET_30, NET_60, etc.) instead of hardcoded 30 days
+    const paymentDays = parseInt((po.paymentTerms || "NET_30").replace(/\D/g, "")) || 30;
+    const dueDate = new Date(Date.now() + paymentDays * 86400000);
+
     // 3. Generate PDF Document
     const pdfBuffer = await generateInvoicePdfBuffer({
       invoiceNumber,
@@ -149,7 +158,7 @@ export function createPostingNode(tenantId: string) {
       customerName: po.customerName,
       gstNumber: po.gstNumber,
       issueDate: new Date().toLocaleDateString(),
-      dueDate: new Date(Date.now() + 30 * 86400000).toLocaleDateString(),
+      dueDate: dueDate.toLocaleDateString(),
       lineItems: invoiceLineItems,
       subtotal: MoneyUtil.toNumber(subtotal),
       tax: MoneyUtil.toNumber(taxAmount),
@@ -179,7 +188,7 @@ export function createPostingNode(tenantId: string) {
         status: "GENERATING",
         currency: po.currency,
         issueDate: new Date(),
-        dueDate: new Date(Date.now() + 30 * 86400000),
+        dueDate,
         paymentTerms: po.paymentTerms,
         subtotal: MoneyUtil.toNumber(subtotal),
         tax: MoneyUtil.toNumber(taxAmount),
@@ -197,14 +206,27 @@ export function createPostingNode(tenantId: string) {
 
     const invoiceId = invoice._id.toString();
 
-    // 6. Post to ERP
-    const connector = await getTenantErpConnector(tenantId);
-    const erpVoucher = await connector.postInvoice(tenantId, {
-      invoiceNumber,
-      poNumber: po.poNumber,
-      totalAmount: MoneyUtil.toNumber(totalAmount),
-      customerName: po.customerName
-    });
+    // 6. Post to ERP — skip if already posted (idempotency: retry after crash must not double-post)
+    let erpVoucher: { voucherNumber: string; erpPostingId: string };
+    if (alreadyPostedToErp) {
+      logger.warn(
+        { tenantId, poId: state.poId, invoiceId, erpPostingId: invoice.erpPostingId },
+        "PostingAgent: ERP posting already recorded — skipping duplicate call"
+      );
+      erpVoucher = { voucherNumber: invoice.erpPostingId!, erpPostingId: invoice.erpPostingId! };
+    } else {
+      const connector = await getTenantErpConnector(tenantId);
+      erpVoucher = await connector.postInvoice(tenantId, {
+        invoiceNumber,
+        poNumber: po.poNumber,
+        totalAmount: MoneyUtil.toNumber(totalAmount),
+        customerName: po.customerName
+      });
+      // C4: Persist erpPostingId immediately — if the ISSUED update below fails, the next retry skips the ERP call
+      await InvoiceRepository.updateStatus(tenantId, invoiceId, "GENERATING", {
+        erpPostingId: erpVoucher.erpPostingId
+      });
+    }
 
     // 7. Complete & Issue
     await InvoiceRepository.updateStatus(tenantId, invoiceId, "ISSUED", {

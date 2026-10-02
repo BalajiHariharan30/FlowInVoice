@@ -74,7 +74,10 @@ export class AgentTools {
     const act = MoneyUtil.from(actual);
     const exp = MoneyUtil.from(expected);
     const diff = act.minus(exp).abs();
-    const variancePercent = exp.gt(0) ? diff.dividedBy(exp).times(100) : MoneyUtil.from(0);
+    // C2: if catalog price is 0 and actual > 0, variance is 100% (not 0% match)
+    const variancePercent = exp.gt(0)
+      ? diff.dividedBy(exp).times(100)
+      : act.gt(0) ? MoneyUtil.from(100) : MoneyUtil.from(0);
     return {
       difference: MoneyUtil.toNumber(diff.toDecimalPlaces(2)),
       variancePercentage: MoneyUtil.toNumber(variancePercent.toDecimalPlaces(2)),

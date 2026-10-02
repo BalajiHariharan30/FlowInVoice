@@ -8,11 +8,12 @@ export interface ICustomer extends Document {
   tenantId: string;
   name: string;
   code: string;
-  email: string;
-  gstNumber: string;
+  email?: string;             // C3: optional — do not fabricate if not on document
+  gstNumber?: string;         // C3: optional — do not fabricate if not on document
   paymentTerms: string;
   currency: string;
   address: string;
+  needsVerification?: boolean; // C3: true for auto-provisioned customers pending human reconciliation
   createdAt: Date;
   updatedAt: Date;
 }
@@ -22,11 +23,12 @@ const CustomerSchema = new Schema<ICustomer>(
     tenantId: { type: String, required: true, index: true },
     name: { type: String, required: true },
     code: { type: String, required: true },
-    email: { type: String, required: true },
-    gstNumber: { type: String, required: true },
+    email: { type: String },                 // C3: not required
+    gstNumber: { type: String },             // C3: not required
     paymentTerms: { type: String, default: "NET_30" },
     currency: { type: String, default: "INR" },
-    address: { type: String, default: "" }
+    address: { type: String, default: "" },
+    needsVerification: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
@@ -281,6 +283,7 @@ export interface IInvoice extends Document {
   lineItems: IInvoiceLineItem[];
   verifiedAt?: Date;
   issuedAt?: Date;
+  erpPostingId?: string;   // C4: persisted immediately after ERP call; retry checks this first
   createdAt: Date;
   updatedAt: Date;
 }
@@ -311,7 +314,8 @@ const InvoiceSchema = new Schema<IInvoice>(
     s3PdfKey: { type: String },
     lineItems: [InvoiceLineItemSchema],
     verifiedAt: { type: Date },
-    issuedAt: { type: Date }
+    issuedAt: { type: Date },
+    erpPostingId: { type: String }   // C4: set after first ERP call; guards against duplicate posts
   },
   { timestamps: true }
 );
