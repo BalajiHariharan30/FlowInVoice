@@ -9,6 +9,7 @@ import { LoadingSkeleton, ErrorBanner } from "../../components/feedback";
 import { PDFDocumentViewer } from "../../components/document/PDFDocumentViewer";
 import { useToast } from "../../contexts/ToastContext";
 import { useAuth } from "../../contexts/AuthContext";
+import { useAppConfig } from "../../hooks/useAppConfig";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -35,6 +36,7 @@ export const ReviewDetailsPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const { user } = useAuth();
+  const { enforceMakerChecker } = useAppConfig();
 
   const [notes, setNotes] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -157,11 +159,10 @@ export const ReviewDetailsPage: React.FC = () => {
   }
 
   const currentUserId = user?.id;
-  const currentUserEmail = user?.email;
-  const isMakerCheckerViolation = Boolean(
-    po?.createdBy &&
-    user &&
-    (po.createdBy === currentUserId || po.createdBy === currentUserEmail)
+  // isMakerCheckerViolation is only true when the backend has enforcement enabled AND the
+  // logged-in user is the same person who created the PO (compare by ID only, not email).
+  const isMakerCheckerViolation = enforceMakerChecker && Boolean(
+    po?.createdBy && user && po.createdBy === currentUserId
   );
 
   const isResolved = review.status !== "PENDING" && review.status !== "ESCALATED";

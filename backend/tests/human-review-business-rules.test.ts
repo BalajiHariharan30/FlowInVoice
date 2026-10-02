@@ -13,6 +13,7 @@ import { runOrchestrationWorkflow } from "../src/ai/workflow/graph.js";
 import { resetWorkflowRateLimiter } from "../src/ai/workflow/rate-limiter.js";
 import { ChainedFallbackOCRProvider } from "../src/agents/providers/ocr.provider.js";
 import Decimal from "decimal.js";
+import { env } from "../src/config/env.js";
 
 function generateAuthToken(tenantId: string, userId: string = "usr_reviewer_1", email: string = "reviewer@enterprise.com"): string {
   return AuthService.generateTokens({
@@ -252,6 +253,10 @@ describe("10 Human Review & Workflow Business Rules Test Suite", () => {
 
   // RULE 5: Segregation of duties (Maker-Checker)
   describe("Rule 5: Segregation of duties (Maker-Checker)", () => {
+    // Explicitly enable enforcement for these tests — the env default is false in NODE_ENV=test
+    beforeEach(() => { env.ENFORCE_MAKER_CHECKER = true; });
+    afterEach(() => { env.ENFORCE_MAKER_CHECKER = false; });
+
     it("rejects approval attempt by PO submitter with 403 MAKER_CHECKER_VIOLATION", async () => {
       const submitterId = "usr_submitter_123";
       const submitterToken = generateAuthToken(tenantId, submitterId, "submitter@enterprise.com");

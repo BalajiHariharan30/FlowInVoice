@@ -120,6 +120,11 @@ export function createApp(): Express {
   apiRouter.use("/audit", auditRouter);
   apiRouter.use("/storage", storageRouter);
 
+  // Public config — no auth required; exposes feature flags the frontend needs at boot time
+  apiRouter.get("/config", (_req: Request, res: Response) => {
+    res.json({ enforceMakerChecker: env.ENFORCE_MAKER_CHECKER });
+  });
+
   app.use(env.API_PREFIX, apiRouter);
 
   // 404 handler

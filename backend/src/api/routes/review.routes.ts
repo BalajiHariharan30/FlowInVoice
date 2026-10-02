@@ -16,6 +16,34 @@ import { ReanalysisService } from "../../ai/workflow/reanalysis.service.js";
 import { QueueManager } from "../../workers/queue.js";
 import { MoneyUtil } from "../../utils/money.js";
 import { logger } from "../../utils/logger.js";
+import { env } from "../../config/env.js";
+
+/**
+ * Returns true when the user who created the PO is the same person attempting to review it,
+ * AND maker-checker enforcement is enabled.
+ * Covers purchase_order and invoice entity types.
+ * Returns false when ENFORCE_MAKER_CHECKER=false (e.g. solo-dev / staging environments).
+ */
+async function isMakerCheckerViolation(
+  tenantId: string,
+  entity: string,
+  entityId: string,
+  userId: string
+): Promise<boolean> {
+  if (!env.ENFORCE_MAKER_CHECKER) return false;
+  let createdBy: string | undefined;
+  if (entity === "purchase_order") {
+    const po = await PurchaseOrderRepository.findById(tenantId, entityId);
+    createdBy = po?.createdBy;
+  } else if (entity === "invoice") {
+    const inv = await InvoiceRepository.findById(tenantId, entityId);
+    if (inv?.poId) {
+      const po = await PurchaseOrderRepository.findById(tenantId, inv.poId);
+      createdBy = po?.createdBy;
+    }
+  }
+  return Boolean(createdBy && createdBy === userId);
+}
 
 export const reviewRouter = Router();
 
@@ -119,25 +147,13 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  // Rule 5: Segregation of duties (Maker-Checker) — compare user IDs only; covers all entity types
+  // Rule 5: Segregation of duties — delegated to isMakerCheckerViolation() helper (respects ENFORCE_MAKER_CHECKER)
   const currentUserId = req.user!.id || (req.user as any).userId;
-  let owningPoCreatedBy: string | undefined;
-  if (review.entity === "purchase_order") {
-    const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
-    owningPoCreatedBy = po?.createdBy;
-  } else if (review.entity === "invoice") {
-    // Resolve the PO that owns this invoice
-    const inv = await InvoiceRepository.findById(tenantId, review.entityId);
-    if (inv?.poId) {
-      const po = await PurchaseOrderRepository.findById(tenantId, inv.poId);
-      owningPoCreatedBy = po?.createdBy;
-    }
-  }
-  if (owningPoCreatedBy && owningPoCreatedBy === currentUserId) {
+  if (await isMakerCheckerViolation(tenantId, review.entity, review.entityId, currentUserId)) {
     res.status(403).json({
       code: "MAKER_CHECKER_VIOLATION",
       message: "Users cannot review documents they submitted",
-      details: { createdBy: owningPoCreatedBy, reviewer: currentUserId },
+      details: { reviewer: currentUserId },
       requestId: req.requestId || ""
     });
     return;
@@ -438,24 +454,13 @@ async function handleReviewRejection(req: Request, res: Response): Promise<void>
     return;
   }
 
-  // Rule 5: Segregation of duties (Maker-Checker) — compare user IDs only; covers all entity types
+  // Rule 5: Segregation of duties — delegated to isMakerCheckerViolation() helper (respects ENFORCE_MAKER_CHECKER)
   const currentUserId = req.user!.id || (req.user as any).userId;
-  let rejectOwningPoCreatedBy: string | undefined;
-  if (review.entity === "purchase_order") {
-    const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
-    rejectOwningPoCreatedBy = po?.createdBy;
-  } else if (review.entity === "invoice") {
-    const inv = await InvoiceRepository.findById(tenantId, review.entityId);
-    if (inv?.poId) {
-      const po = await PurchaseOrderRepository.findById(tenantId, inv.poId);
-      rejectOwningPoCreatedBy = po?.createdBy;
-    }
-  }
-  if (rejectOwningPoCreatedBy && rejectOwningPoCreatedBy === currentUserId) {
+  if (await isMakerCheckerViolation(tenantId, review.entity, review.entityId, currentUserId)) {
     res.status(403).json({
       code: "MAKER_CHECKER_VIOLATION",
       message: "Users cannot review documents they submitted",
-      details: { createdBy: rejectOwningPoCreatedBy, reviewer: currentUserId },
+      details: { reviewer: currentUserId },
       requestId: req.requestId || ""
     });
     return;

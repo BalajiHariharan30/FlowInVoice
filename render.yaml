@@ -56,3 +56,5 @@ services:
         sync: false
       - key: CORS_ORIGIN
         value: "https://flow-in-voice.vercel.app,http://localhost:5173"
+      - key: ENFORCE_MAKER_CHECKER
+        value: "false"

@@ -65,7 +65,14 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional().default(""),
   GEMINI_API_KEY: z.string().optional().default(""),
 
-  DOCUMENT_AI_PROVIDER: z.enum(["bedrock", "mistral_ocr", "vision_fallback", "mock"]).default("bedrock")
+  DOCUMENT_AI_PROVIDER: z.enum(["bedrock", "mistral_ocr", "vision_fallback", "mock"]).default("bedrock"),
+
+  // Maker-checker segregation of duties enforcement.
+  // Set to false in development/staging so a solo user can upload and review their own POs.
+  // Defaults to true in production; explicitly set ENFORCE_MAKER_CHECKER=false to disable.
+  ENFORCE_MAKER_CHECKER: z.coerce.boolean().default(
+    process.env.NODE_ENV === "production" ? true : false
+  )
 });
 
 
