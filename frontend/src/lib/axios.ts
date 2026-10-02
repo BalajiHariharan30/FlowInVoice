@@ -28,6 +28,8 @@ export const apiClient = axios.create({
 
 // Request interceptor: inject Bearer token and tenant header
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  // TODO(D1/security): reading tokens from localStorage exposes them to XSS.
+  // Replace with httpOnly cookie transport once the /auth/session backend endpoint lands.
   const token = localStorage.getItem("accessToken");
   const tenantId = localStorage.getItem("tenantId") || "tenant_default";
 

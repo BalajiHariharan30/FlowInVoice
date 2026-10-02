@@ -35,6 +35,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = useCallback((accessToken: string, refreshToken: string, userData: AuthUser) => {
+    // TODO(D1/security): tokens stored in localStorage are readable by any JS on this origin.
+    // XSS vulnerability — migrate to httpOnly SameSite=Strict cookies via a dedicated
+    // POST /auth/session endpoint so tokens are never exposed to document.cookie or JS.
+    // See: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
     localStorage.setItem("accessToken", accessToken);
     localStorage.setItem("refreshToken", refreshToken);
     localStorage.setItem("user", JSON.stringify(userData));

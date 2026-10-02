@@ -90,3 +90,17 @@ export const env: EnvConfig = new Proxy(parsedEnv, {
     return true;
   }
 });
+
+// D3: Fail fast in production if JWT secrets are the insecure hardcoded defaults.
+// A misconfigured deploy would otherwise silently accept tokens signed with the well-known dev key.
+if (parsedEnv.NODE_ENV === "production") {
+  const DEFAULT_JWT = "super-secret-jwt-key-minimum-32-chars-length";
+  const DEFAULT_REFRESH = "super-secret-refresh-key-minimum-32-chars-length";
+  if (parsedEnv.JWT_SECRET === DEFAULT_JWT || parsedEnv.REFRESH_TOKEN_SECRET === DEFAULT_REFRESH) {
+    console.error(
+      "[FATAL] JWT_SECRET and/or REFRESH_TOKEN_SECRET are set to insecure default values in a production environment. " +
+      "Set strong, randomly generated secrets (≥ 32 chars) via environment variables before starting the server."
+    );
+    process.exit(1);
+  }
+}
