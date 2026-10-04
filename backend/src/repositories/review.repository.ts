@@ -426,6 +426,7 @@ export class ReviewRepository {
     const dedupKey = computeReviewDedupKey(tenantId, data);
     const doc: any = {
       ...data,
+      status: data.status || "PENDING",
       _id: id,
       id,
       tenantId,

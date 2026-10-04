@@ -11,8 +11,13 @@ import { inMemory, generateId, isDbConnected } from "./base.js";
 
 export class ResumeJobRepository {
   /**
-   * Atomically write PO status update + outbox insert in a MongoDB session.
-   * Falls back to non-transactional writes when running in-memory.
+   * Atomically write PO status update + outbox insert.
+   *
+   * Strategy (C2):
+   *  1. In-memory mode        → no transactions needed.
+   *  2. Real MongoDB, replica → use session.withTransaction.
+   *  3. Real MongoDB, standalone (code 20 / "replica set" error) → non-transactional
+   *     sequence: update PO, then insert outbox row, revert PO on outbox failure.
    */
   static async createWithTransaction(
     tenantId: string,
@@ -39,6 +44,12 @@ export class ResumeJobRepository {
       return id;
     }
 
+    // Helper: is this a "transactions not supported" error?
+    const isNoReplicaError = (e: any): boolean =>
+      e?.code === 20 ||
+      /Transaction numbers are only allowed on a replica set/i.test(e?.message ?? "") ||
+      /replica set/i.test(e?.message ?? "");
+
     const session = await mongoose.startSession();
     let outboxId = "";
     try {
@@ -50,10 +61,30 @@ export class ResumeJobRepository {
         );
         outboxId = doc._id.toString();
       });
+      return outboxId;
+    } catch (err: any) {
+      if (!isNoReplicaError(err)) throw err;
+      // C2: Standalone MongoDB fallback — non-transactional sequence
     } finally {
       await session.endSession();
     }
-    return outboxId;
+
+    // Non-transactional fallback path (standalone MongoDB)
+    await updatePoFn(null);
+    let doc: any;
+    try {
+      [doc] = await ResumeJob.create(
+        [{ tenantId, poId, reviewId, status: "PENDING", attempts: 0, lastError: null, processingLock: null }]
+      );
+    } catch (outboxErr: any) {
+      // Compensate: revert PO status to HUMAN_REVIEW so the next retry can re-attempt
+      await mongoose.model("PurchaseOrder").findOneAndUpdate(
+        { tenantId, _id: poId },
+        { $set: { status: "HUMAN_REVIEW", updatedAt: new Date() } }
+      ).catch(() => {});
+      throw outboxErr;
+    }
+    return doc._id.toString();
   }
 
   /** Mark the outbox row ENQUEUED (BullMQ accepted it). */

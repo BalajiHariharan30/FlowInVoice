@@ -11,6 +11,13 @@ services:
       - mongo_data:/data/db
     environment:
       MONGO_INITDB_DATABASE: p2i_saas
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    healthcheck:
+      test: >
+        mongosh --quiet --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7.2-alpine
@@ -50,9 +57,12 @@ services:
       DOCUMENT_AI_PROVIDER: mock
       CORS_ORIGIN: http://localhost:5173
     depends_on:
-      - mongodb
-      - redis
-      - qdrant
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
 
   frontend:
     build:

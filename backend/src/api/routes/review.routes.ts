@@ -160,6 +160,32 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
   }
 
   if (review.status === "APPROVED") {
+    // I5 self-heal: if PO is still HUMAN_REVIEW with no active resume row, re-run the resume steps.
+    // This recovers from partial failures where resolveReview succeeded but outbox write failed.
+    if ((review.stage === "extraction" || review.stage === "validation") && review.entity === "purchase_order") {
+      const po = await PurchaseOrderRepository.findById(tenantId, review.entityId);
+      const hasActiveResume = po && po.status !== "HUMAN_REVIEW";
+      if (po && !hasActiveResume) {
+        logger.warn({ tenantId, poId: review.entityId, reviewId }, "self-heal: review APPROVED but PO stuck in HUMAN_REVIEW — re-enqueuing resume");
+        try {
+          const healOutboxId = await ResumeJobRepository.createWithTransaction(
+            tenantId, review.entityId, review._id.toString(),
+            async (session) => {
+              const updated = await PurchaseOrderRepository.updateHumanReviewStatus(
+                tenantId, review.entityId, "HUMAN_APPROVED",
+                { humanVerified: true, humanReviewedAt: new Date(), humanReviewedBy: req.user!.email },
+                false, undefined, session
+              );
+              if (!updated) throw Object.assign(new Error("State machine blocked"), { code: "PO_TRANSITION_BLOCKED" });
+            }
+          );
+          const { enqueued } = await QueueManager.addPOResumeJob(tenantId, review.entityId, review._id.toString(), healOutboxId);
+          if (!enqueued) await executeSynchronousResumeFallback(tenantId, review.entityId, review._id.toString());
+        } catch (healErr: any) {
+          logger.error({ healErr: healErr.message, tenantId, reviewId }, "self-heal failed");
+        }
+      }
+    }
     res.status(200).json({
       id: review._id.toString(),
       entity: review.entity,
@@ -379,52 +405,61 @@ async function handleReviewApproval(req: Request, res: Response): Promise<void> 
   }
 
   // B2: resolveReview runs after the PO+outbox transaction commits.
-  const resolved = await ReviewRepository.resolveReview(
-    tenantId,
-    review._id.toString(),
-    "APPROVED",
-    resolutionNotes || "Approved by human reviewer",
-    req.user!.email
-  );
-  if (!resolved) {
-    // Concurrent resolve is fine — PO+outbox already committed. Re-fetch for response shape.
-    const latest = await ReviewRepository.findById(tenantId, reviewId);
-    if (latest?.status === "APPROVED") {
-      res.status(200).json({
-        id: latest._id.toString(),
-        entity: latest.entity,
-        entityId: latest.entityId,
-        stage: latest.stage,
-        status: latest.status,
-        resolutionNotes: latest.resolutionNotes,
-        resolvedBy: latest.resolvedBy,
-        resolvedAt: latest.resolvedAt,
-        resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
-      });
-      return;
+  try {
+    const resolved = await ReviewRepository.resolveReview(
+      tenantId,
+      review._id.toString(),
+      "APPROVED",
+      resolutionNotes || "Approved by human reviewer",
+      req.user!.email
+    );
+    if (!resolved) {
+      // Concurrent resolve is fine — PO+outbox already committed. Re-fetch for response shape.
+      const latest = await ReviewRepository.findById(tenantId, reviewId);
+      if (latest?.status === "APPROVED") {
+        res.status(200).json({
+          id: latest._id.toString(),
+          entity: latest.entity,
+          entityId: latest.entityId,
+          stage: latest.stage,
+          status: latest.status,
+          resolutionNotes: latest.resolutionNotes,
+          resolvedBy: latest.resolvedBy,
+          resolvedAt: latest.resolvedAt,
+          resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
+        });
+        return;
+      }
     }
+
+    await AuditRepository.create(tenantId, {
+      agentName: "HumanReviewCenter",
+      action: "REVIEW_APPROVED",
+      status: "SUCCESS",
+      entityId: review.entityId,
+      workflowId: "manual_review",
+      summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. All exceptions resolved; workflow resumed.`
+    });
+
+    res.status(200).json({
+      id: (resolved ?? review)._id.toString(),
+      entity: (resolved ?? review).entity,
+      entityId: (resolved ?? review).entityId,
+      stage: (resolved ?? review).stage,
+      status: resolved?.status ?? "APPROVED",
+      resolutionNotes: resolved?.resolutionNotes,
+      resolvedBy: resolved?.resolvedBy,
+      resolvedAt: resolved?.resolvedAt,
+      resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
+    });
+  } catch (postErr: any) {
+    logger.error({ err: postErr.message, tenantId, reviewId, entityId: review.entityId }, "handleReviewApproval: post-commit step failed");
+    res.status(500).json({
+      code: "APPROVAL_POST_COMMIT_ERROR",
+      message: `Approval committed but a follow-up step failed: ${postErr.message}`,
+      requestId: req.requestId || ""
+    });
   }
-
-  await AuditRepository.create(tenantId, {
-    agentName: "HumanReviewCenter",
-    action: "REVIEW_APPROVED",
-    status: "SUCCESS",
-    entityId: review.entityId,
-    workflowId: "manual_review",
-    summary: `Human review (${review.stage} stage) approved by ${req.user!.email}. All exceptions resolved; workflow resumed.`
-  });
-
-  res.status(200).json({
-    id: (resolved ?? review)._id.toString(),
-    entity: (resolved ?? review).entity,
-    entityId: (resolved ?? review).entityId,
-    stage: (resolved ?? review).stage,
-    status: resolved?.status ?? "APPROVED",
-    resolutionNotes: resolved?.resolutionNotes,
-    resolvedBy: resolved?.resolvedBy,
-    resolvedAt: resolved?.resolvedAt,
-    resumeStatus: review.stage === "invoice" ? "COMPLETED" : "QUEUED"
-  });
 }
 
 async function handleReviewRejection(req: Request, res: Response): Promise<void> {

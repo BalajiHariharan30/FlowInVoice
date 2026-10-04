@@ -634,7 +634,13 @@ export const ReviewDetailsPage: React.FC = () => {
                     type="button"
                     onClick={() => approveMutation.mutate()}
                     disabled={isMakerCheckerViolation || approveMutation.isPending || rejectMutation.isPending}
-                    title={isMakerCheckerViolation ? "Cannot approve documents you submitted (Segregation of Duties)" : undefined}
+                    title={
+                      isMakerCheckerViolation
+                        ? "Segregation of Duties: you submitted this document and cannot approve it"
+                        : approveMutation.isPending || rejectMutation.isPending
+                        ? "Another action is in progress"
+                        : undefined
+                    }
                     className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 flex items-center justify-center space-x-2"
                   >
                     <Check className="w-4 h-4" />
@@ -647,7 +653,13 @@ export const ReviewDetailsPage: React.FC = () => {
                     type="button"
                     onClick={() => setShowRejectModal(true)}
                     disabled={isMakerCheckerViolation || approveMutation.isPending || rejectMutation.isPending}
-                    title={isMakerCheckerViolation ? "Cannot reject documents you submitted (Segregation of Duties)" : undefined}
+                    title={
+                      isMakerCheckerViolation
+                        ? "Segregation of Duties: you submitted this document and cannot reject it"
+                        : approveMutation.isPending || rejectMutation.isPending
+                        ? "Another action is in progress"
+                        : undefined
+                    }
                     className="w-full py-2 px-4 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-semibold transition disabled:opacity-50"
                   >
                     Reject Exception
